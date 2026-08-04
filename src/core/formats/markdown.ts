@@ -37,7 +37,7 @@ export function exportMarkdown(document: OpenWordDocument): ExportResult<string>
   });
   service.addRule("highlight", {
     filter: ["mark"],
-    replacement: (content) => `==${content}==`,
+    replacement: (content) => `<mark>${content}</mark>`,
   });
   service.addRule("comment-anchor", {
     filter: (node) => node instanceof HTMLElement && node.hasAttribute("data-comment-id"),

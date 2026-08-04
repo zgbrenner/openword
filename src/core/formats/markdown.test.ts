@@ -38,6 +38,18 @@ const value = 1;
     expect(result.document.content.content?.find((node) => node.type === "taskList")?.content?.[0]?.attrs?.checked).toBe(true);
   });
 
+  it("round trips highlight markup as portable inline HTML", () => {
+    const imported = importMarkdown("A <mark>highlighted</mark> phrase.");
+    const exported = exportMarkdown(imported.document);
+    const roundTrip = importMarkdown(exported.data);
+    const highlighted = roundTrip.document.content.content?.[0]?.content?.find((node) =>
+      node.marks?.some((mark) => mark.type === "highlight"),
+    );
+
+    expect(exported.data).toContain("<mark>highlighted</mark>");
+    expect(highlighted?.text).toBe("highlighted");
+  });
+
   it("exports portable Markdown with an explicit compatibility warning", () => {
     const imported = importMarkdown("# Title\n\n- Item\n");
     const exported = exportMarkdown(imported.document);
