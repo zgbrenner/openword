@@ -1,0 +1,38 @@
+[package]
+name = "openword"
+version = "0.1.0"
+description = "A free, open-source, genuinely lightweight word processor."
+authors = ["OpenWord contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/zgbrenner/openword"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "openword_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# --- Core dependencies only. -------------------------------------------
+# This crate must stay structurally incapable of making network requests:
+# no reqwest, no http client, nothing that talks to the network, ever.
+# That guarantee is what keeps the baseline app lightweight forever.
+# Optional network-touching features (cloud sync, LLM assist, collab) must
+# live in separate crates under /plugins, never as a dependency added here.
+# -------------------------------------------------------------------------
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
