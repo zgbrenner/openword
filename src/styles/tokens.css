@@ -1,0 +1,43 @@
+:root {
+  color-scheme: light;
+  --font-ui: "Segoe UI Variable", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --blue-700: #174ea6;
+  --blue-600: #2563b8;
+  --blue-500: #3478d4;
+  --blue-100: #e8f1fd;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-soft: #f5f7fa;
+  --surface-muted: #eef1f5;
+  --workspace: #dfe3e8;
+  --text: #1f2328;
+  --text-muted: #66707c;
+  --border: #d6dbe2;
+  --border-strong: #b9c1cc;
+  --danger: #b42318;
+  --success: #177245;
+  --warning: #9a6700;
+  --shadow-page: 0 2px 7px rgb(17 24 39 / 15%), 0 18px 45px rgb(17 24 39 / 10%);
+  --shadow-overlay: 0 18px 55px rgb(15 23 42 / 24%);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --titlebar-height: 42px;
+  --status-height: 28px;
+}
+
+.theme-dark {
+  color-scheme: dark;
+  --surface: #20242a;
+  --surface-raised: #292e35;
+  --surface-soft: #252a31;
+  --surface-muted: #30363e;
+  --workspace: #171a1f;
+  --text: #f2f4f7;
+  --text-muted: #adb5c0;
+  --border: #3e4650;
+  --border-strong: #586270;
+  --blue-100: #19365d;
+  --blue-700: #8bbcff;
+  --shadow-page: 0 2px 8px rgb(0 0 0 / 42%), 0 20px 50px rgb(0 0 0 / 32%);
+}

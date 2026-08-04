@@ -1,0 +1,22 @@
+.ribbon { border-bottom: 1px solid var(--border); background: var(--surface); }
+.ribbon-tabs { display: flex; align-items: end; min-height: 32px; padding: 0 8px; gap: 1px; }
+.ribbon-tabs button { min-height: 31px; padding: 0 13px; border: 0; border-bottom: 2px solid transparent; background: transparent; }
+.ribbon-tab:hover { background: var(--surface-soft); }
+.ribbon-tab.is-active { border-bottom-color: var(--blue-600); color: var(--blue-700); font-weight: 600; }
+.file-tab { color: var(--blue-700); font-weight: 700; }
+.ribbon-content { min-height: 84px; overflow-x: auto; border-top: 1px solid var(--border); }
+.ribbon-panel { display: flex; align-items: stretch; min-width: max-content; height: 84px; padding: 5px 8px 4px; }
+.ribbon-group { display: grid; grid-template-rows: 1fr auto; min-width: max-content; padding: 0 9px; border-right: 1px solid var(--border); }
+.ribbon-group:last-child { border-right: 0; }
+.ribbon-group__content { display: flex; align-items: center; gap: 4px; }
+.ribbon-group__label { padding-top: 2px; color: var(--text-muted); font-size: 10px; text-align: center; }
+.ribbon-button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; max-width: 120px; padding: 4px 7px; border: 1px solid transparent; border-radius: 4px; background: transparent; white-space: nowrap; }
+.ribbon-button:hover:not(:disabled), .ribbon-button.is-active { border-color: var(--border); background: var(--surface-muted); }
+.ribbon-button.is-large { flex-direction: column; justify-content: center; min-width: 55px; min-height: 55px; gap: 3px; padding: 4px 8px; font-size: 11px; }
+.ribbon-stack { display: grid; align-content: center; gap: 1px; }
+.ribbon-row { display: flex; align-items: center; gap: 3px; }
+.ribbon-field { display: grid; grid-template-columns: auto auto; align-items: center; gap: 4px; }
+.ribbon-field label { color: var(--text-muted); font-size: 10px; }
+.ribbon-color { width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 4px; padding: 3px; background: var(--surface); }
+.zoom-readout { min-width: 45px; height: 27px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); font-size: 11px; }
+@media (max-height: 720px) { .ribbon-content { min-height: 70px; } .ribbon-panel { height: 70px; } .ribbon-button.is-large { min-height: 44px; } }

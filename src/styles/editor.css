@@ -1,0 +1,40 @@
+.editor-scale-shell { position: relative; margin: 0 auto; }
+.editor-page { position: absolute; top: 0; left: 0; transform-origin: top left; overflow: visible; border: 1px solid #cfd4da; background: #fff; color: #1d2329; box-shadow: var(--shadow-page); }
+.editor-web-shell { width: min(980px, 100%); min-height: 100%; margin: 0 auto; background: var(--surface); box-shadow: var(--shadow-page); }
+.editor-web-page { padding: 48px clamp(28px, 7vw, 84px) 96px; }
+.openword-prosemirror { min-height: 7in; outline: 0; color: #1d2329; font-family: var(--document-font, Aptos, Arial, sans-serif); font-size: var(--document-font-size, 11pt); line-height: 1.35; }
+.openword-prosemirror > :first-child { margin-top: 0; }
+.openword-prosemirror p { margin: 0 0 .72em; min-height: 1.35em; }
+.openword-prosemirror h1, .openword-prosemirror h2, .openword-prosemirror h3, .openword-prosemirror h4, .openword-prosemirror h5, .openword-prosemirror h6 { break-after: avoid; color: #152033; line-height: 1.18; }
+.openword-prosemirror h1 { margin: 1.25em 0 .45em; font-size: 2em; }
+.openword-prosemirror h2 { margin: 1.15em 0 .4em; font-size: 1.55em; }
+.openword-prosemirror h3 { margin: 1em 0 .35em; font-size: 1.28em; }
+.openword-prosemirror h4 { margin: .9em 0 .3em; font-size: 1.12em; }
+.openword-prosemirror ul, .openword-prosemirror ol { margin: .5em 0 .8em; padding-left: 2em; }
+.openword-prosemirror li > p { margin-bottom: .2em; }
+.openword-prosemirror ul[data-type="taskList"] { list-style: none; padding-left: .25em; }
+.openword-prosemirror ul[data-type="taskList"] li { display: flex; gap: .55em; align-items: flex-start; }
+.openword-prosemirror blockquote { margin: 1em 0; padding: .2em 0 .2em 1em; border-left: 3px solid #94a3b8; color: #475569; }
+.openword-prosemirror pre { overflow: auto; padding: 12px 14px; border-radius: 6px; background: #f2f4f7; font: 10pt/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.openword-prosemirror code { border-radius: 3px; background: #f0f2f5; padding: .08em .25em; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.openword-prosemirror pre code { background: transparent; padding: 0; }
+.openword-prosemirror table { width: 100%; margin: 1em 0; border-collapse: collapse; table-layout: fixed; }
+.openword-prosemirror th, .openword-prosemirror td { position: relative; min-width: 36px; padding: 6px 8px; border: 1px solid #9ca3af; vertical-align: top; }
+.openword-prosemirror th { background: #eef2f7; font-weight: 700; }
+.openword-prosemirror .selectedCell::after { position: absolute; inset: 0; content: ""; pointer-events: none; background: rgb(37 99 184 / 13%); }
+.openword-prosemirror img.openword-image { display: inline-block; max-width: 100%; height: auto; margin: 4px; vertical-align: middle; }
+.openword-prosemirror img.ProseMirror-selectednode { outline: 3px solid #60a5fa; }
+.openword-prosemirror a { color: #155fbd; text-decoration: underline; }
+.openword-prosemirror mark { border-radius: 2px; padding: 0 .08em; }
+.openword-prosemirror [data-comment-id] { border-bottom: 2px solid #f2b636; background: #fff5c2; }
+.openword-prosemirror .openword-page-break { position: relative; height: 24px; margin: 22px -0.55in; border-top: 1px dashed #8f98a5; border-bottom: 1px dashed #8f98a5; background: #f3f4f6; }
+.openword-prosemirror .openword-page-break::after { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); content: "Page break"; padding: 0 7px; background: #f3f4f6; color: #6b7280; font: 9px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; }
+.openword-prosemirror p.is-editor-empty:first-child::before { float: left; height: 0; color: #9aa2ad; content: attr(data-placeholder); pointer-events: none; }
+.openword-prosemirror p[data-paragraph-style="title"] { margin: .2em 0 .35em; font-size: 28pt; font-weight: 600; line-height: 1.1; }
+.openword-prosemirror p[data-paragraph-style="subtitle"] { color: #667085; font-size: 15pt; }
+.openword-prosemirror p[data-paragraph-style="quote"] { margin-left: .4in; margin-right: .4in; font-style: italic; }
+.openword-prosemirror p[data-paragraph-style="compact"] { margin-bottom: .15em; }
+.show-formatting-marks .openword-prosemirror p::after { content: "¶"; margin-left: .2em; color: #7aa8db; font-size: .8em; }
+.show-formatting-marks .openword-prosemirror br::after { content: "↵"; color: #7aa8db; }
+.theme-dark .editor-web-shell { background: #fff; }
+@media (max-width: 700px) { .document-scroll-region { padding-bottom: 60px; } .editor-web-page { padding: 30px 22px 70px; } }

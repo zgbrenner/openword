@@ -1,0 +1,27 @@
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body { overflow: hidden; background: var(--workspace); color: var(--text); font-family: var(--font-ui); font-size: 13px; }
+button, input, select, textarea { color: inherit; font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+button, input, select, textarea { outline: none; }
+:focus-visible { outline: 2px solid var(--blue-500); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.primary-button, .secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; border-radius: 6px; padding: 0 13px; font-weight: 600; }
+.primary-button { border: 1px solid var(--blue-600); background: var(--blue-600); color: #fff; }
+.primary-button:hover { background: var(--blue-700); }
+.secondary-button { border: 1px solid var(--border); background: var(--surface); }
+.compact-button { min-height: 30px; padding-inline: 10px; font-size: 12px; }
+.danger-text { color: var(--danger) !important; }
+.openword-app { display: grid; grid-template-rows: auto auto auto minmax(0,1fr) auto; width: 100%; height: 100%; background: var(--surface); }
+.openword-app.is-focus-mode { grid-template-rows: auto minmax(0,1fr); }
+.icon-button { display: inline-grid; place-items: center; min-width: 32px; height: 32px; padding: 0; border: 0; border-radius: 5px; background: transparent; }
+.icon-button:hover:not(:disabled) { background: var(--surface-muted); }
+.icon-button.is-compact { min-width: 27px; width: 27px; height: 27px; }
+.select-control { min-height: 30px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); padding: 0 24px 0 8px; }
+.notice-stack { position: fixed; z-index: 1000; right: 18px; bottom: 42px; display: grid; gap: 8px; width: min(390px, calc(100vw - 36px)); }
+.notice { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 12px; border: 1px solid var(--border); border-left: 4px solid var(--blue-500); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-overlay); }
+.notice--error { border-left-color: var(--danger); }
+.notice--success { border-left-color: var(--success); }
+.notice p { margin: 3px 0 0; color: var(--text-muted); line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
