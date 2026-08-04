@@ -18,6 +18,7 @@ export function createEditorExtensions() {
       bulletList: false,
       orderedList: false,
       listItem: false,
+      listKeymap: false,
       link: {
         openOnClick: false,
         autolink: true,

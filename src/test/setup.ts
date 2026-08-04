@@ -18,5 +18,12 @@ Object.defineProperty(window, "matchMedia", {
   }),
 });
 
+class ResizeObserverMock implements ResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+globalThis.ResizeObserver = ResizeObserverMock;
 window.confirm = () => true;
 window.print = () => undefined;
