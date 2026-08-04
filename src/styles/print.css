@@ -1,0 +1,9 @@
+@media print {
+  body { overflow: visible; background: #fff; }
+  .title-bar, .ribbon, .document-tabs, .side-panel, .status-bar, .focus-mode-toolbar, .notice-stack, .backstage, .dialog-backdrop, .command-palette { display: none !important; }
+  .openword-app, .workspace-shell, .document-workspace, .document-scroll-region { display: block; width: auto; height: auto; overflow: visible; background: #fff; padding: 0; }
+  .editor-scale-shell { width: auto !important; min-height: 0 !important; }
+  .editor-page, .editor-web-shell, .editor-web-page { position: static; width: auto !important; min-height: 0 !important; margin: 0; padding: 0; border: 0; box-shadow: none; transform: none !important; }
+  .openword-prosemirror .openword-page-break { height: 0; margin: 0; border: 0; background: transparent; break-after: page; page-break-after: always; }
+  .openword-prosemirror .openword-page-break::after { display: none; }
+}

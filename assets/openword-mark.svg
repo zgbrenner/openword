@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">OpenWord</title>
+  <desc id="desc">A white document with a W on a blue rounded square.</desc>
+  <rect width="512" height="512" rx="104" fill="#2563b8"/>
+  <path d="M142 92h169l59 59v269H142z" fill="#fff"/>
+  <path d="M311 92v59h59" fill="#dcecff"/>
+  <path d="M188 226l26 116 35-83h15l35 83 25-116h-27l-16 77-31-77h-17l-31 77-16-77z" fill="#2563b8"/>
+  <path d="M188 181h132" stroke="#b8cee9" stroke-width="18" stroke-linecap="round"/>
+</svg>
