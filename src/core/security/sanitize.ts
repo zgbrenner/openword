@@ -2,14 +2,14 @@ import DOMPurify from "dompurify";
 
 const ALLOWED_TAGS = [
   "a", "b", "blockquote", "br", "code", "col", "colgroup", "del", "div", "em",
-  "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li", "mark", "ol",
+  "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "input", "li", "mark", "ol",
   "p", "pre", "s", "span", "strike", "strong", "sub", "sup", "table", "tbody",
   "td", "tfoot", "th", "thead", "tr", "u", "ul",
 ];
 
 const ALLOWED_ATTR = [
   "alt", "checked", "class", "colspan", "data-comment-id", "data-openword-page-break",
-  "height", "href", "rowspan", "src", "start", "style", "target", "title", "type", "width",
+  "disabled", "height", "href", "rowspan", "src", "start", "style", "target", "title", "type", "width",
 ];
 
 const SAFE_LINK = /^(?:https?:|mailto:|tel:|#)/i;
@@ -38,6 +38,11 @@ export function sanitizeHtml(html: string): string {
       const replacement = document.createTextNode(image.getAttribute("alt") ? `[${image.getAttribute("alt")}]` : "");
       image.replaceWith(replacement);
     }
+  }
+
+  for (const input of document.querySelectorAll("input")) {
+    if (input.getAttribute("type")?.toLowerCase() !== "checkbox") input.remove();
+    else input.setAttribute("disabled", "");
   }
 
   for (const element of document.querySelectorAll<HTMLElement>("[style]")) {

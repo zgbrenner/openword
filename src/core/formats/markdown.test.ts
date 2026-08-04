@@ -29,6 +29,15 @@ const value = 1;
     expect(types).toContain("codeBlock");
   });
 
+  it("restores task lists and OpenWord page-break comments", () => {
+    const result = importMarkdown("- [x] Complete\n- [ ] Pending\n\n<!-- pagebreak -->\n");
+    const types = result.document.content.content?.map((node) => node.type);
+
+    expect(types).toContain("taskList");
+    expect(types).toContain("pageBreak");
+    expect(result.document.content.content?.find((node) => node.type === "taskList")?.content?.[0]?.attrs?.checked).toBe(true);
+  });
+
   it("exports portable Markdown with an explicit compatibility warning", () => {
     const imported = importMarkdown("# Title\n\n- Item\n");
     const exported = exportMarkdown(imported.document);

@@ -6,7 +6,11 @@ import { exportHtml, importHtml } from "./html";
 import type { ExportResult, ImportResult } from "./types";
 
 export function importMarkdown(markdown: string, filename = "Imported document.md"): ImportResult {
-  const html = marked.parse(markdown, { gfm: true, breaks: false, async: false }) as string;
+  const withPageBreaks = markdown.replace(
+    /<!--\s*(?:openword-)?pagebreak\s*-->/gi,
+    '<div data-openword-page-break="true"></div>',
+  );
+  const html = marked.parse(withPageBreaks, { gfm: true, breaks: false, async: false }) as string;
   const result = importHtml(html, filename.replace(/\.md$/i, ".html"));
   result.document.title = filename.replace(/\.md$/i, "") || "Imported document";
   result.document.source = { format: "markdown", importedAt: new Date().toISOString() };
