@@ -196,12 +196,17 @@ function measure(view: EditorView, runtime: PaginationRuntime) {
     // never split it (see module doc comment / ARCHITECTURE.md), just let
     // it overflow. Advance the natural-space bookkeeping and page count by
     // however many page-heights it spans so later blocks and the page
-    // counter stay reasonable.
+    // counter stay reasonable. We can't know exactly which page its bottom
+    // visually lands on relative to the sheet stack (that would require
+    // solving the same line-level reflow this whole approach defers to
+    // v3), so force the *next* block onto a fresh page rather than risk it
+    // rendering inside whatever gap the oversized block's overflow crosses.
     if (bottomWithinPage > pageContentHeight + EPS) {
       const additionalPages = Math.max(0, Math.ceil((bottomWithinPage - EPS) / pageContentHeight) - 1);
       if (additionalPages > 0) {
         pageContentStartNatural += additionalPages * pageContentHeight;
         pageCount += additionalPages;
+        forcePageBreakNext = true;
       }
     }
   });

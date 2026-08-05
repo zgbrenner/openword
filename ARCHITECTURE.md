@@ -75,7 +75,8 @@ utility.
 | UI framework | **Svelte** | Compiles away — near-zero runtime overhead, no virtual DOM, far lighter than React/Vue for a UI this size, and scales better than hand-rolled vanilla DOM as the app grows (dialogs, style galleries, comment panels). |
 | Editor engine | **ProseMirror** (schema/state/view/transform/commands/keymap/history) | MIT, mature, the proven foundation SuperDoc itself uses. We own our schema and rendering. |
 | Rich-text extras | `prosemirror-tables`, `prosemirror-schema-list`, `prosemirror-inputrules`, `prosemirror-dropcursor`, `prosemirror-gapcursor` | Community-maintained, MIT, no need to hand-roll table editing or list logic. |
-| DOCX I/O | Custom module in `src/docx/` using `JSZip` (archive layer) + the browser's native `DOMParser`/`XMLSerializer` (no extra XML dependency needed — the webview already has one) | Parse → model → edit → serialize pattern with unmodeled-node passthrough. See DOCX fidelity roadmap below. |
+| Track changes | `@handlewithcare/prosemirror-suggest-changes` | MIT, actively maintained, built for our exact ProseMirror peer deps. Researched rather than hand-rolled — correctly intercepting every insert/delete so deletions become marks instead of real removals is easy to get subtly wrong. See "Comments and track changes" below. |
+| DOCX I/O | Custom module in `src/docx/` using `JSZip` (archive layer) + the browser's native `DOMParser`/`XMLSerializer` (no extra XML dependency needed — the webview already has one) | Parse → model → edit → serialize pattern. See DOCX fidelity roadmap below — unmodeled-node passthrough is not yet implemented. |
 | Native shell / file I/O | Rust, `tauri-plugin-fs`, `tauri-plugin-dialog`, `tauri-plugin-single-instance` | Native dialogs, file associations, atomic writes for autosave. |
 | Icons | Fluent UI System Icons (MIT) — Office-familiar toolbar iconography | Permissive, matches the Word/Office visual language users expect. |
 
@@ -123,43 +124,144 @@ True Word-style pagination (content reflowing across discrete, independently
 laid-out pages, with per-page headers/footers, without ever splitting a
 table row awkwardly) is a genuinely hard rendering problem — it's the reason
 SuperDoc built a custom DOM painter instead of rendering ProseMirror's DOM
-directly. Attempting to fake that in v1 would produce a half-working,
-editing-breaking feature, which fails the "always works" requirement worse
-than being upfront about scope.
+directly. A full multi-container rewrite (page N gets its own DOM subtree)
+is a multi-week v3 project we're deliberately not taking on yet (see below).
 
-**v1 (shipped in this baseline):** a single continuous, fully-editable
-ProseMirror surface rendered as one flowing document, with **live visual
-page-boundary rendering** — the canvas is measured continuously and drawn as
-a stack of page-sized "paper" sheets on a gray background, with page-break
-shadows/gaps at accurate page-height intervals (accounting for margins),
-recalculated on every edit. Word count, page count, and page size (Letter/A4)
-all work correctly. What this doesn't yet do: intelligently avoid splitting
-a table row or a heading-from-its-paragraph across a page boundary.
+**v1 (superseded):** a single continuous ProseMirror surface with a
+*decorative* dashed line drawn at each page-break height. It never reserved
+real vertical space, so a paragraph could visually straddle a page boundary
+with no actual gap — cosmetically page-like, not actually paginated.
 
-**v2 (roadmap):** move to a reflowed multi-container layout (page N gets its
-own DOM subtree, content nodes are measured and assigned to pages, with
-whole-block-node overflow to the next page as an intermediate step before
-full line-level reflow) — the SuperDoc-style architecture, built
-independently under Apache-2.0.
+**v2 (shipped, this change): real reflow on one ProseMirror document.**
+We kept the single-contenteditable / single-document-model architecture
+(still no multi-container rewrite) but made the page break *real* using a
+measure → decorate → (browser re-lays-out) technique instead of a second
+rendering pass:
+
+- `src/editor/paginationPlugin.ts` is a ProseMirror plugin whose `view()`
+  hook, after every doc-changing update (throttled to one pass per
+  `requestAnimationFrame`, plus a `ResizeObserver` on the editor's DOM to
+  also catch async image loads/font swaps that change layout without a
+  transaction), measures the actual rendered top offset and height of every
+  **top-level block node** — `view.nodeDOM(pos)` for each child of
+  `state.doc`, which is robust to extra sibling elements ProseMirror or
+  other plugins (gapCursor) may inject, unlike indexing `view.dom.children`
+  directly.
+- Using `geometryFor()` from `pagination.ts`, it walks the blocks in one
+  forward pass accumulating natural (undecorated) height against each
+  page's content budget. A block that would cross the budget gets a
+  `Decoration.node(pos, endPos, {style: 'margin-top: Npx'})` sized to land
+  it exactly at the next page's content-area top — pure visual decoration,
+  never touching document positions, so selection, click-to-position,
+  gapCursor/dropCursor and prosemirror-tables all keep working unmodified.
+  Because margin-top decorations from a prior pass are still baked into the
+  live DOM when the next pass runs, that prior pass's contribution is read
+  back off each block's own inline `style.marginTop` and subtracted out
+  before recomputing — this is what keeps the whole thing a **single
+  measure-and-decorate pass** per doc change (a small, bounded number in
+  practice) instead of an iterative remeasure loop that could run away.
+- An explicit `page_break` node (`Insert > Page break`) always forces the
+  block *after* it onto a new page, in addition to ordinary overflow-based
+  breaks — matching Word, where the break itself just sits inline and
+  everything after it jumps to the next page.
+- A single block taller than one full page (a huge image or table) is never
+  split — it's pushed to the top of a page and then allowed to overflow
+  past the following page boundary/gap. This is a deliberate, documented
+  limitation (see "Known v2 gaps" below), not a bug.
+- `PageCanvas.svelte` renders the page background as a stack of *separate*
+  white page rectangles (`.ow-page-sheet`, one per `PaginationState.pageCount`)
+  on the gray canvas background, with a real gap between them (bottom
+  margin of page N + top margin of page N+1) — genuine "stack of separate
+  sheets," not one continuous white column. The single ProseMirror
+  content element is layered on top; because the plugin above pushes
+  content out of the gap regions, no text renders in them.
+- Page size (Letter/A4) and zoom changes are plain Svelte state, not
+  ProseMirror transactions, so `PageCanvas.svelte` explicitly calls
+  `EditorController.setPaginationGeometry()` whenever either changes,
+  which re-triggers a measurement pass with the new geometry.
+  `EditorController` owns a small `PaginationRuntime` control-channel
+  object (not itself ProseMirror state) that survives `loadDocument()`
+  rebuilding the plugin instance (e.g. File > Open), so geometry updates
+  keep reaching whichever plugin instance is currently mounted.
+- `PaginationState.pageCount` (read by `StatusBar.svelte`) is still the
+  single source of truth for the displayed page count; it's now kept in
+  sync by the plugin's own measurement pass instead of the old
+  `computeBreaks()`-on-`ResizeObserver` path. `computeBreaks()` itself
+  is kept in `pagination.ts` as a small, independently-correct pure-math
+  helper, but is no longer used for the live render.
+
+**Known v2 gaps**, tracked rather than silent:
+
+- A block taller than one page (large image/table) overflows past a page
+  boundary instead of being clipped or split (see above).
+- No intelligent avoidance of splitting a table row, or separating a
+  heading from the paragraph that follows it, across a page boundary —
+  those are whole top-level blocks like any other, and only whole-block
+  overflow is handled.
+- The block immediately after an oversized, page-spanning block is always
+  forced onto a fresh page (rather than computed exactly), since knowing
+  precisely where the oversized block's bottom visually lands relative to
+  the page-sheet stack would require the same line-level measurement v3
+  is for.
+
+**v3 (roadmap): true line-level splitting**, matching Word's behavior for
+normal body text — a paragraph that doesn't fit in the remaining space on a
+page has its *lines* split across the boundary (some lines rendered as part
+of page N, the rest as part of page N+1), rather than the whole paragraph
+jumping to the next page. This needs actual per-page DOM regions (page N's
+lines rendered into page N's own container, not one flowing element), i.e.
+the multi-region rendering SuperDoc built a custom painter for — the same
+architectural line called out at the top of this section. Doing that
+without breaking ProseMirror's single-document editing model (transactions,
+selection, undo, collab-readiness) is the multi-week v3 project; v2's
+measure-and-decorate technique intentionally stays within ProseMirror's
+normal single-DOM rendering so it could be built incrementally instead.
 
 ## DOCX fidelity — current approach and roadmap
 
-**v1:** `src/docx/export.ts` and `src/docx/import.ts` implement a real
-parse→model→serialize pipeline for the common case (paragraphs, headings,
-runs with standard character formatting, lists, tables, inline images,
-hyperlinks) using JSZip + DOMParser directly against the OOXML the docx
-format actually is. Unrecognized XML parts (custom XML, embedded fonts,
-uncommon elements) are round-tripped: **stored verbatim and re-emitted
-unchanged** rather than dropped, following the mitigation pattern every
-credible fidelity-focused project uses. OpenWord's own native save format
-(`.owdoc`, a JSON serialization of the ProseMirror document) is the format
-with zero fidelity loss — DOCX is treated as an interchange format, same as
-it is for every other word processor.
+**v1 (shipped):** `src/docx/export.ts` and `src/docx/import.ts` implement a
+real parse→model→serialize pipeline for the common case (paragraphs,
+headings, runs with standard character formatting, lists, tables, inline
+images, hyperlinks) using JSZip + DOMParser directly against the OOXML the
+docx format actually is. OpenWord's own native save format (`.owdoc`, a
+JSON serialization of the ProseMirror document plus the comments/
+track-changes side-stores — see below) is the format with zero fidelity
+loss; DOCX is treated as an interchange format, same as it is for every
+other word processor.
 
-**v2 (roadmap):** expand OOXML element coverage (tracked changes, comments,
-section breaks, complex numbering), track fidelity regressions with an
-automated round-trip test corpus (a goal explicitly called out by our
-research as release-blocking once the project matures past baseline).
+**v2 (shipped):** comments and tracked changes now round-trip through real
+OOXML — `w:commentRangeStart/End` + `w:commentReference` + `word/comments.xml`
+(with reply threading via `word/commentsExtended.xml`) for comments,
+`w:ins`/`w:del` (with `w:delText`) for tracked insertions/deletions, author
+and date carried correctly in both directions. List numbering is now
+resolved through `word/styles.xml` inheritance (a paragraph's style chain,
+walking `w:basedOn`) when a paragraph has no direct `w:numPr` of its own,
+not just direct paragraph-level numbering.
+
+**v3 (roadmap, not yet done):**
+- **Unmodeled-node passthrough** — unrecognized XML (custom XML parts,
+  embedded fonts, uncommon elements, section breaks, headers/footers) is
+  still **dropped on import**, not preserved and re-emitted. This is the
+  single biggest remaining fidelity gap: a document round-tripped through
+  OpenWord today will lose anything outside the elements listed above.
+  Doing this properly needs a place to carry the opaque bytes across the
+  import→edit→export boundary (a new field on `OwDocFile`/`LoadedDocument`,
+  or schema-level attributes) — a real design task, not a quick add.
+- Section breaks and headers/footers are unsupported on both import and
+  export (headers/footers specifically need their own schema-level design
+  first, since ProseMirror's linear doc model has no native concept of
+  content that repeats per page — see Pagination above for the same
+  "needs its own subsystem" shape of problem).
+- Tracked-changes `modification` marks (formatting changes tracked as
+  suggestions, e.g. "font size changed from 12 to 14") export as already
+  applied rather than as a reviewable suggestion — OOXML's `w:rPrChange` is
+  real but deep; simplified for now.
+- An inserted/deleted *image* round-trips as a plain image — OOXML's
+  `w:ins`/`w:del` wrap text runs, not drawings, and the `docx` library's
+  insertion/deletion run types don't cover that case.
+- An automated round-trip test corpus (a goal explicitly called out by our
+  research as release-blocking once the project matures past baseline) still
+  doesn't exist.
 
 ## Comments and track changes
 
@@ -221,9 +323,10 @@ dead button or a surprising failure:
 
 - **Comments and track changes** work natively (add/reply/resolve comments,
   suggesting-mode insertions/deletions with accept/reject, both in a docked
-  review panel) and round-trip through OpenWord's own `.owdoc` format.
-  Real-time multi-user collaboration on either is not implemented — the
-  "author" is just a locally-set display name, there's no live sync.
+  review panel) and round-trip through both OpenWord's own `.owdoc` format
+  and real DOCX (`w:comment`/`w:ins`/`w:del`). Real-time multi-user
+  collaboration on either is not implemented — the "author" is just a
+  locally-set display name, there's no live sync.
 - **Spellcheck** relies entirely on the OS/webview's native spellchecker
   (the ProseMirror content area sets `spellcheck="true"`) rather than a
   bundled dictionary/grammar engine — deliberately, to avoid bundling a
@@ -234,4 +337,11 @@ dead button or a surprising failure:
   shaded regions) isn't implemented; the ruler currently shows accurate
   geometry and supports dragging the indent marker, but margins are fixed
   at 1 inch pending Page Setup UI.
-- **Format painter** isn't implemented yet.
+- **Reflowed pagination (v2)** doesn't split a single block (paragraph,
+  table) across a page boundary — an oversized block is pushed whole to a
+  page top and allowed to overflow rather than being torn mid-content. True
+  line-level splitting matching Word's behavior for ordinary body text is a
+  v3 item (see Pagination above).
+- **Headers, footers, and section breaks** aren't implemented in the editor
+  or in DOCX import/export — a repeating per-page content model needs its
+  own schema-level design (see Pagination and DOCX fidelity above).
