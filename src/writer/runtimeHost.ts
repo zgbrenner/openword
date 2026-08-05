@@ -20,12 +20,30 @@ export function runtimeAssetUrl(file: string, baseUrl = "./writer-runtime/"): st
   return `${baseUrl.replace(/\/?$/, "/")}${file}`;
 }
 
+function absoluteAssetUrl(file: string, baseUrl: string): string {
+  return new URL(runtimeAssetUrl(file, baseUrl), document.baseURI).href;
+}
+
 function mkdirIfMissing(fs: EmscriptenFileSystem, path: string): void {
   try {
     fs.mkdir(path);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!/exist/i.test(message)) throw error;
+  }
+}
+
+function assertThreadedWasmSupport(): void {
+  if (!globalThis.crossOriginIsolated) {
+    throw new Error(
+      "Writer requires cross-origin isolation. Configure COOP=same-origin and COEP=require-corp for both Tauri and the Vite development server.",
+    );
+  }
+  if (typeof globalThis.SharedArrayBuffer === "undefined") {
+    throw new Error("Writer requires SharedArrayBuffer support for its threaded WebAssembly runtime.");
+  }
+  if (typeof globalThis.WebAssembly === "undefined") {
+    throw new Error("This system webview does not provide WebAssembly support.");
   }
 }
 
@@ -45,21 +63,30 @@ export class WriterRuntimeHost {
 
   async start(canvas: HTMLCanvasElement): Promise<WriterTransport> {
     if (this.started) throw new Error("Writer runtime has already been started");
+    assertThreadedWasmSupport();
     this.started = true;
 
+    const sofficeUrl = absoluteAssetUrl("soffice.js", this.baseUrl);
+    const runtimeBaseUrl = new URL(this.baseUrl, document.baseURI).href;
     const module: OpenWordLowaModule = {
       canvas,
       uno_scripts: [
-        runtimeAssetUrl("zeta.js", this.baseUrl),
-        runtimeAssetUrl("openword_writer_thread.js", this.baseUrl),
+        absoluteAssetUrl("zeta.js", this.baseUrl),
+        absoluteAssetUrl("openword_writer_thread.js", this.baseUrl),
       ],
-      locateFile: (path: string, prefix?: string) => `${prefix || this.baseUrl}${path}`,
+      locateFile: (path: string, prefix?: string) => new URL(path, prefix || runtimeBaseUrl).href,
+      // Emscripten workers cannot reliably infer a nested main-script URL.
+      // Supplying the bootstrap as a Blob matches the supported ZetaOffice
+      // integration pattern and keeps every worker import local.
+      mainScriptUrlOrBlob: new Blob([`importScripts(${JSON.stringify(sofficeUrl)});`], {
+        type: "text/javascript",
+      }),
     };
     this.module = module;
     window.Module = module;
 
     try {
-      await this.loadScript(runtimeAssetUrl("soffice.js", this.baseUrl));
+      await this.loadScript(sofficeUrl);
       const portPromise = module.uno_main;
       if (!portPromise) throw new Error("LOWA did not expose Module.uno_main");
       const port = await this.withTimeout(portPromise, "Writer runtime did not start in time");
