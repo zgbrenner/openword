@@ -89,3 +89,5 @@ var OPENWORD_PACKAGE_PRESERVATION = Object.freeze({
     return "writer-won";
   },
 });
+
+globalThis.OPENWORD_PACKAGE_PRESERVATION = OPENWORD_PACKAGE_PRESERVATION;
