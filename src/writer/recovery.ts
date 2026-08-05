@@ -10,6 +10,10 @@ import {
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
 import type { WriterClient } from "./client";
+import {
+  mergeWriterPackage,
+  type PackagePreservationSnapshot,
+} from "./packagePassthrough";
 import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
@@ -32,6 +36,7 @@ export interface RecoverySource {
   fileName: string;
   originalPath: string | null;
   format: WriterFormat;
+  preservation: PackagePreservationSnapshot | null;
 }
 
 function virtualUrl(path: string): string {
@@ -107,6 +112,8 @@ export async function writeRecoverySnapshot(
   } finally {
     host.removeVirtualFile(virtualPath);
   }
+  const merged = await mergeWriterPackage(bytes, source.format, source.preservation);
+  bytes = merged.bytes;
 
   const directory = await recoveryDirectory();
   const previous = await readCurrentMetadata(directory);
