@@ -9,11 +9,18 @@
   import { WriterClient } from "@/writer/client";
   import {
     openWriterDocumentAtPath,
+    openWriterDocumentBytes,
     openWriterDocumentDialog,
     saveWriterDocument,
     saveWriterDocumentAsDialog,
     type WriterOpenResult,
+    type WriterSaveResult,
   } from "@/writer/fileApi";
+  import {
+    clearRecoverySnapshot,
+    readRecoverySnapshot,
+    writeRecoverySnapshot,
+  } from "@/writer/recovery";
   import { WriterRuntimeHost } from "@/writer/runtimeHost";
   import { WriterState } from "@/writer/state.svelte";
   import { isTauri } from "@/lib/tauriEnv";
@@ -24,6 +31,7 @@
   let unsubscribeWriter: (() => void) | null = null;
   let pendingOpenPath: string | null = null;
   let documentInitialized = false;
+  let recoveryInFlight = false;
 
   $effect(() => {
     const title = `${writerState.dirty ? "● " : ""}${writerState.fileName} — OpenWord`;
@@ -45,6 +53,10 @@
     writerState.setDocument(result.path, result.name, result.format);
   }
 
+  async function clearRecoveryAfterDiscard(): Promise<void> {
+    if (isTauri()) await clearRecoverySnapshot().catch(() => {});
+  }
+
   async function openAtPath(path: string): Promise<void> {
     const writer = requireWriter();
     if (!writer) {
@@ -55,6 +67,7 @@
 
     try {
       applyOpenResult(await openWriterDocumentAtPath(path, writer.client, writer.host));
+      await clearRecoveryAfterDiscard();
     } catch (error) {
       await showError("Could not open document", error);
     }
@@ -65,7 +78,9 @@
     if (!writer || !(await confirmDiscard("open another document"))) return;
     try {
       const result = await openWriterDocumentDialog(writer.client, writer.host);
-      if (result) applyOpenResult(result);
+      if (!result) return;
+      applyOpenResult(result);
+      await clearRecoveryAfterDiscard();
     } catch (error) {
       await showError("Could not open document", error);
     }
@@ -77,9 +92,17 @@
     try {
       await writer.client.newDocument("docx");
       writerState.setDocument(null, "Document1.docx", "docx");
+      await clearRecoveryAfterDiscard();
     } catch (error) {
       await showError("Could not create document", error);
     }
+  }
+
+  async function reportRetainedBackup(result: WriterSaveResult): Promise<void> {
+    if (!result.recoveryPath) return;
+    const detail = `The document was saved, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
+    if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
+    else console.warn(detail);
   }
 
   async function doSave(): Promise<void> {
@@ -88,8 +111,10 @@
     if (!writerState.filePath) return doSaveAs();
 
     try {
-      await saveWriterDocument(writerState.filePath, writerState.format, writer.client, writer.host);
+      const result = await saveWriterDocument(writerState.filePath, writerState.format, writer.client, writer.host);
       writerState.dirty = false;
+      await clearRecoveryAfterDiscard();
+      await reportRetainedBackup(result);
     } catch (error) {
       await showError("Could not save document", error);
     }
@@ -108,9 +133,55 @@
         result.path.split(/[\\/]/).pop() ?? `${baseName}.${result.format}`,
         result.format,
       );
+      await clearRecoveryAfterDiscard();
+      await reportRetainedBackup(result);
     } catch (error) {
       await showError("Could not save document", error);
     }
+  }
+
+  async function persistRecovery(): Promise<void> {
+    const writer = requireWriter();
+    if (!isTauri() || !writer || !writerState.dirty || recoveryInFlight) return;
+    recoveryInFlight = true;
+    try {
+      await writeRecoverySnapshot(writer.client, writer.host, {
+        fileName: writerState.fileName,
+        originalPath: writerState.filePath,
+        format: writerState.format,
+      });
+    } catch (error) {
+      console.error("Could not write OpenWord recovery snapshot", error);
+    } finally {
+      recoveryInFlight = false;
+    }
+  }
+
+  async function restoreRecoveryIfAvailable(
+    nextClient: WriterClient,
+    nextHost: WriterRuntimeHost,
+  ): Promise<boolean> {
+    if (!isTauri()) return false;
+    const snapshot = await readRecoverySnapshot().catch(() => null);
+    if (!snapshot) return false;
+
+    const restore = await ask(
+      `OpenWord found unsaved work from ${new Date(snapshot.metadata.createdAt).toLocaleString()}. Restore it?`,
+      { title: "Recover document" },
+    );
+    if (!restore) {
+      await clearRecoverySnapshot().catch(() => {});
+      return false;
+    }
+
+    await openWriterDocumentBytes(snapshot.bytes, snapshot.metadata.format, nextClient, nextHost);
+    writerState.setDocument(
+      snapshot.metadata.originalPath,
+      snapshot.metadata.fileName,
+      snapshot.metadata.format,
+    );
+    writerState.dirty = true;
+    return true;
   }
 
   async function showError(title: string, error: unknown): Promise<void> {
@@ -180,8 +251,11 @@
         pendingOpenPath = null;
         applyOpenResult(await openWriterDocumentAtPath(path, nextClient, nextHost));
       } else if (!documentInitialized) {
-        await nextClient.newDocument("docx");
-        writerState.setDocument(null, "Document1.docx", "docx");
+        const restored = await restoreRecoveryIfAvailable(nextClient, nextHost);
+        if (!restored) {
+          await nextClient.newDocument("docx");
+          writerState.setDocument(null, "Document1.docx", "docx");
+        }
       }
       documentInitialized = true;
     } catch (error) {
@@ -198,17 +272,26 @@
       const path = event.payload[0];
       if (path) void openAtPath(path);
     });
+    const autosave = window.setInterval(() => void persistRecovery(), 20_000);
 
     let unlistenClose: (() => void) | undefined;
     getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (!writerState.dirty) return;
         event.preventDefault();
+        await persistRecovery();
         const discard = await ask(
-          "You have unsaved changes. Quit without saving? Recovery snapshots are not available in this foundation build.",
+          "You have unsaved changes. Quit without saving? A recovery snapshot is available unless you choose to discard it.",
           { title: "OpenWord" },
         );
-        if (discard) await getCurrentWindow().destroy();
+        if (discard) {
+          const keepRecovery = await ask(
+            "Keep the recovery snapshot for the next launch?",
+            { title: "OpenWord recovery", kind: "warning" },
+          );
+          if (!keepRecovery) await clearRecoverySnapshot().catch(() => {});
+          await getCurrentWindow().destroy();
+        }
       })
       .then((fn) => (unlistenClose = fn));
 
@@ -216,6 +299,7 @@
       unlistenMenu.then((fn) => fn());
       unlistenOpen.then((fn) => fn());
       unlistenClose?.();
+      window.clearInterval(autosave);
       unsubscribeWriter?.();
       client?.destroy();
       runtimeHost?.destroy();
