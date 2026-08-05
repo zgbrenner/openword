@@ -1,11 +1,19 @@
 export type WriterFormat = "docx" | "odt";
+export type ParagraphAlignment = "left" | "center" | "right" | "justify";
 
 export type WriterCommand =
   | { type: "format.toggleBold" }
   | { type: "format.toggleItalic" }
   | { type: "format.toggleUnderline" }
   | { type: "history.undo" }
-  | { type: "history.redo" };
+  | { type: "history.redo" }
+  | { type: "paragraph.alignLeft" }
+  | { type: "paragraph.alignCenter" }
+  | { type: "paragraph.alignRight" }
+  | { type: "paragraph.alignJustify" }
+  | { type: "list.toggleBullets" }
+  | { type: "list.toggleNumbering" }
+  | { type: "insert.pageBreak" };
 
 export type WriterRequestMethod =
   | "engine.ping"
@@ -45,6 +53,11 @@ export type WriterEvent =
       kind: "event";
       event: "selection.formatting";
       payload: { bold: boolean; italic: boolean; underline: boolean };
+    }
+  | {
+      kind: "event";
+      event: "selection.paragraph";
+      payload: { alignment: ParagraphAlignment; bullets: boolean; numbering: boolean };
     }
   | { kind: "event"; event: "engine.failure"; payload: WriterError };
 
