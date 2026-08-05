@@ -10,6 +10,7 @@ let controller = null;
 let modifyListener = null;
 const statusListeners = [];
 const formatting = { bold: false, italic: false, underline: false };
+const paragraph = { alignment: "left", bullets: false, numbering: false };
 
 const commandUrls = OPENWORD_WRITER_COMMANDS;
 
@@ -86,23 +87,46 @@ function clearListeners() {
   modifyListener = null;
 }
 
-function emitFormatting() {
-  postEvent("selection.formatting", { ...formatting });
-}
-
-function addFormattingStatus(id, key) {
+function addStatusListener(id, onState) {
   const urlObject = transformUrl(`.uno:${id}`);
   const dispatchObject = queryDispatch(urlObject);
   const listener = zetajs.unoObject([css.frame.XStatusListener], {
     disposing() {},
     statusChanged(state) {
-      const value = zetajs.fromAny(state.State);
-      formatting[key] = typeof value === "boolean" ? value : false;
-      emitFormatting();
+      onState(zetajs.fromAny(state.State));
     },
   });
   dispatchObject.addStatusListener(listener, urlObject);
   statusListeners.push({ dispatchObject, listener, urlObject });
+}
+
+function emitFormatting() {
+  postEvent("selection.formatting", { ...formatting });
+}
+
+function emitParagraph() {
+  postEvent("selection.paragraph", { ...paragraph });
+}
+
+function addFormattingStatus(id, key) {
+  addStatusListener(id, (value) => {
+    formatting[key] = typeof value === "boolean" ? value : false;
+    emitFormatting();
+  });
+}
+
+function addParagraphStatus(id, alignment) {
+  addStatusListener(id, (value) => {
+    if (value === true) paragraph.alignment = alignment;
+    emitParagraph();
+  });
+}
+
+function addListStatus(id, key) {
+  addStatusListener(id, (value) => {
+    paragraph[key] = typeof value === "boolean" ? value : false;
+    emitParagraph();
+  });
 }
 
 function attachDocumentListeners() {
@@ -110,6 +134,12 @@ function attachDocumentListeners() {
   addFormattingStatus("Bold", "bold");
   addFormattingStatus("Italic", "italic");
   addFormattingStatus("Underline", "underline");
+  addParagraphStatus("LeftPara", "left");
+  addParagraphStatus("CenterPara", "center");
+  addParagraphStatus("RightPara", "right");
+  addParagraphStatus("JustifyPara", "justify");
+  addListStatus("DefaultBullet", "bullets");
+  addListStatus("DefaultNumbering", "numbering");
 
   if (model && typeof model.addModifyListener === "function") {
     modifyListener = zetajs.unoObject([css.util.XModifyListener], {
