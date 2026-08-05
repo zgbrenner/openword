@@ -3,11 +3,20 @@
 
 var OPENWORD_WRITER_PAGE_STYLES = Object.freeze({
   updatesFor(command) {
-    if (!command || typeof command.enabled !== "boolean") {
+    const type = command && command.type;
+    if (
+      type !== "header.setEnabled" &&
+      type !== "footer.setEnabled" &&
+      type !== "pageStyle.setDifferentFirstPage" &&
+      type !== "pageStyle.setDifferentOddEven"
+    ) {
+      throw new Error(`Unsupported page-style command: ${String(type)}`);
+    }
+    if (typeof command.enabled !== "boolean") {
       throw new Error("Page-style commands require an enabled boolean");
     }
 
-    switch (command.type) {
+    switch (type) {
       case "header.setEnabled":
         return [{ property: "HeaderIsOn", value: command.enabled }];
       case "footer.setEnabled":
@@ -19,8 +28,6 @@ var OPENWORD_WRITER_PAGE_STYLES = Object.freeze({
           { property: "HeaderIsShared", value: !command.enabled },
           { property: "FooterIsShared", value: !command.enabled },
         ];
-      default:
-        throw new Error(`Unsupported page-style command: ${String(command.type)}`);
     }
   },
 
