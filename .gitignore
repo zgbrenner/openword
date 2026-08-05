@@ -7,13 +7,12 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
-# Generated LibreOffice Writer runtime binaries
-/public/writer-runtime/soffice.js
-/public/writer-runtime/soffice.wasm
-/public/writer-runtime/soffice.data
-/public/writer-runtime/soffice.data.js.metadata
-/public/writer-runtime/zeta.js
-/engine/runtime.lock.json.tmp
+# Writer engine source/build workspace and generated runtime artifacts
+.engine-work/
+public/writer-runtime/*
+!public/writer-runtime/.gitkeep
+!public/writer-runtime/openword_writer_thread.js
+engine/runtime.lock.json.tmp
 
 # Editor / OS
 .vscode/*
