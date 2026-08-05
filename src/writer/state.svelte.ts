@@ -3,6 +3,7 @@ import type { ParagraphAlignment, WriterError, WriterEvent, WriterFormat } from 
 export class WriterState {
   ready = $state(false);
   dirty = $state(false);
+  requiresSaveAs = $state(false);
   failure = $state<WriterError | null>(null);
   engineVersion = $state<string | null>(null);
   bold = $state(false);
@@ -28,7 +29,7 @@ export class WriterState {
         this.engineVersion = event.payload.version;
         break;
       case "document.changed":
-        this.dirty = event.payload.dirty;
+        this.dirty = this.requiresSaveAs || event.payload.dirty;
         break;
       case "selection.formatting":
         this.bold = event.payload.bold;
@@ -58,7 +59,8 @@ export class WriterState {
     this.filePath = path;
     this.fileName = fileName;
     this.format = format;
-    this.dirty = false;
+    this.requiresSaveAs = path === null && fileName !== "Document1.docx";
+    this.dirty = this.requiresSaveAs;
   }
 
   setStartupFailure(error: unknown): void {
