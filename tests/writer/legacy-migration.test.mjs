@@ -22,12 +22,14 @@ test("migration detaches the document from the legacy path and requires Save As"
   assert.match(fileApi, /must be saved as DOCX or ODT/);
 });
 
-test("application marks migrated documents unsaved and explains the one-way conversion", () => {
-  const app = read("src/App.svelte");
-  assert.match(app, /if \(result\.migration\)/);
-  assert.match(app, /writerState\.dirty = true/);
-  assert.match(app, /result\.migration\.message/);
-  assert.match(app, /Legacy document converted/);
+test("document state marks detached migrated documents unsaved and the status bar explains why", () => {
+  const state = read("src/writer/state.svelte.ts");
+  const status = read("src/components/WriterStatusBar.svelte");
+  assert.match(state, /requiresSaveAs/);
+  assert.match(state, /this\.requiresSaveAs = path === null && fileName !== "Document1\.docx"/);
+  assert.match(state, /this\.dirty = this\.requiresSaveAs/);
+  assert.match(status, /Legacy document converted/);
+  assert.match(status, /Save As required/);
 });
 
 test("new Writer documents never serialize back to owdoc", () => {
