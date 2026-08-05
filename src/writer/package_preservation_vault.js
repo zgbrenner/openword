@@ -25,18 +25,32 @@ var OPENWORD_PACKAGE_VAULT = Object.freeze({
 
     const output = [];
     const writerPaths = new Set();
-    for (const input of writerEntries) {
-      const path = OPENWORD_PACKAGE_PRESERVATION.normalize(input.path);
-      if (writerPaths.has(path)) throw new Error(`duplicate Writer package entry: ${path}`);
-      writerPaths.add(path);
-      if (!(input.bytes instanceof Uint8Array)) throw new Error(`Writer entry is not binary: ${path}`);
-      output.push(Object.freeze({ path, bytes: new Uint8Array(input.bytes) }));
-    }
-
     const restored = [];
     const writerWon = [];
     const droppedSignatures = [];
     const blockedExecutables = [];
+    const pushUnique = (items, path) => {
+      if (!items.includes(path)) items.push(path);
+    };
+
+    for (const input of writerEntries) {
+      const path = OPENWORD_PACKAGE_PRESERVATION.normalize(input.path);
+      if (writerPaths.has(path)) throw new Error(`duplicate Writer package entry: ${path}`);
+      if (!(input.bytes instanceof Uint8Array)) throw new Error(`Writer entry is not binary: ${path}`);
+
+      const classification = OPENWORD_PACKAGE_PRESERVATION.classify(snapshot.format, path);
+      if (classification === "drop-signature") {
+        pushUnique(droppedSignatures, path);
+        continue;
+      }
+      if (classification === "blocked-executable") {
+        pushUnique(blockedExecutables, path);
+        continue;
+      }
+
+      writerPaths.add(path);
+      output.push(Object.freeze({ path, bytes: new Uint8Array(input.bytes) }));
+    }
 
     for (const original of snapshot.entries) {
       const action = OPENWORD_PACKAGE_PRESERVATION.action(
@@ -49,10 +63,10 @@ var OPENWORD_PACKAGE_VAULT = Object.freeze({
           restored.push(original.path);
           break;
         case "drop-signature":
-          droppedSignatures.push(original.path);
+          pushUnique(droppedSignatures, original.path);
           break;
         case "block-executable":
-          blockedExecutables.push(original.path);
+          pushUnique(blockedExecutables, original.path);
           break;
         default:
           if (writerPaths.has(original.path) || original.classification === "writer-owned") {
