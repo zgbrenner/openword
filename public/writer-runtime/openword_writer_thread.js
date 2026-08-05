@@ -11,13 +11,7 @@ let modifyListener = null;
 const statusListeners = [];
 const formatting = { bold: false, italic: false, underline: false };
 
-const commandUrls = Object.freeze({
-  "format.toggleBold": ".uno:Bold",
-  "format.toggleItalic": ".uno:Italic",
-  "format.toggleUnderline": ".uno:Underline",
-  "history.undo": ".uno:Undo",
-  "history.redo": ".uno:Redo",
-});
+const commandUrls = OPENWORD_WRITER_COMMANDS;
 
 function postEvent(event, payload) {
   zetajs.mainPort.postMessage({ kind: "event", event, payload });
