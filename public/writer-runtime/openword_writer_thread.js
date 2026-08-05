@@ -100,12 +100,48 @@ function addStatusListener(id, onState) {
   statusListeners.push({ dispatchObject, listener, urlObject });
 }
 
+function currentPageStyle() {
+  if (!model || !controller) throw new Error("No Writer document is active");
+  const viewCursor = controller.getViewCursor();
+  const pageStyleName = viewCursor.getPropertyValue("PageStyleName");
+  if (typeof pageStyleName !== "string" || !pageStyleName) {
+    throw new Error("Writer did not expose the current page style");
+  }
+  const pageStyle = model.getStyleFamilies().getByName("PageStyles").getByName(pageStyleName);
+  if (!pageStyle) throw new Error(`Writer page style is unavailable: ${pageStyleName}`);
+  return { pageStyleName, pageStyle };
+}
+
+function emitPageStyle() {
+  try {
+    const { pageStyleName, pageStyle } = currentPageStyle();
+    const payload = OPENWORD_WRITER_PAGE_STYLES.read(
+      pageStyleName,
+      (property) => pageStyle.getPropertyValue(property),
+    );
+    postEvent("selection.pageStyle", payload);
+  } catch {
+    // Transient cursor states during document load may not have a page style.
+  }
+}
+
+function applyPageStyleCommand(command) {
+  const { pageStyle } = currentPageStyle();
+  const updates = OPENWORD_WRITER_PAGE_STYLES.updatesFor(command);
+  for (const update of updates) {
+    pageStyle.setPropertyValue(update.property, update.value);
+  }
+  emitPageStyle();
+}
+
 function emitFormatting() {
   postEvent("selection.formatting", { ...formatting });
+  emitPageStyle();
 }
 
 function emitParagraph() {
   postEvent("selection.paragraph", { ...paragraph });
+  emitPageStyle();
 }
 
 function addFormattingStatus(id, key) {
@@ -171,6 +207,7 @@ function activateModel(nextModel) {
   controller = model.getCurrentController();
   hideDocumentChrome();
   attachDocumentListeners();
+  emitPageStyle();
   postEvent("document.changed", { dirty: false });
 }
 
@@ -217,8 +254,11 @@ function writeDocument(path, format, markClean) {
 function executeCommand(command) {
   const type = command && command.type;
   const unoUrl = commandUrls[type];
-  if (!unoUrl) throw new Error(`Unsupported Writer command: ${String(type)}`);
-  dispatch(unoUrl);
+  if (unoUrl) {
+    dispatch(unoUrl);
+    return;
+  }
+  applyPageStyleCommand(command);
 }
 
 function bindRequests() {
