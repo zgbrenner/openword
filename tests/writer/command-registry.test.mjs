@@ -27,7 +27,9 @@ test("maps Word-facing semantic commands to verified LibreOffice dispatch URLs",
       "paragraph.alignJustify": ".uno:JustifyPara",
       "list.toggleBullets": ".uno:DefaultBullet",
       "list.toggleNumbering": ".uno:DefaultNumbering",
-      "insert.pageBreak": ".uno:InsertPagebreak"
+      "insert.pageBreak": ".uno:InsertPagebreak",
+      "header.edit": ".uno:JumpToHeader",
+      "footer.edit": ".uno:JumpToFooter"
     },
   );
 });
