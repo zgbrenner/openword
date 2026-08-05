@@ -1,6 +1,7 @@
 import { Schema, type NodeSpec, type MarkSpec } from "prosemirror-model";
 import { addListNodes } from "prosemirror-schema-list";
 import { tableNodes } from "prosemirror-tables";
+import { addSuggestionMarks } from "@handlewithcare/prosemirror-suggest-changes";
 import OrderedMap from "orderedmap";
 
 // The OpenWord document schema. This is intentionally modeled on what a
@@ -186,9 +187,33 @@ const marks: Record<string, MarkSpec> = {
     ],
     toDOM: (mark) => ["a", { href: mark.attrs.href, title: mark.attrs.title }, 0],
   },
+  // Anchors a text range to a CommentThread (see src/editor/comments.ts) —
+  // the thread's actual content (author, text, replies, resolved state)
+  // lives outside the PM doc, this mark just records which thread(s) a
+  // range belongs to. `excludes: ""` overrides the default same-type
+  // exclusion so overlapping threads (different ids) can coexist on the
+  // same text, which is routine once a document has more than one comment.
+  comment: {
+    attrs: { id: {} },
+    excludes: "",
+    inclusive: true,
+    parseDOM: [
+      {
+        tag: "span[data-comment-id]",
+        getAttrs: (dom) => ({ id: (dom as HTMLElement).getAttribute("data-comment-id") }),
+      },
+    ],
+    toDOM: (mark) => ["span", { "data-comment-id": mark.attrs.id, class: "ow-comment-anchor" }, 0],
+  },
 };
 
+// Track-changes marks (insertion/deletion/modification) come from
+// @handlewithcare/prosemirror-suggest-changes (MIT) rather than being
+// hand-rolled — see ARCHITECTURE.md's track-changes section for why. The
+// library's marks only carry a suggestion `id`; author/timestamp metadata
+// for each id lives in a side-store (src/editor/trackChanges.ts), the same
+// pattern comment threads use to stay out of the document model.
 export const schema = new Schema({
   nodes: allNodes,
-  marks,
+  marks: addSuggestionMarks(marks),
 });

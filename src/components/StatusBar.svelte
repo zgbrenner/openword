@@ -3,13 +3,21 @@
   import type { EditorController } from "@/lib/editorController.svelte";
   import type { ViewState } from "@/lib/viewState.svelte";
   import type { PaginationState } from "@/lib/paginationState.svelte";
+  import type { ReviewPanelState } from "@/lib/reviewPanelState.svelte";
+  import { findSuggestions } from "@/editor/trackChanges";
   import * as icons from "@/icons";
 
   const controller = getContext<EditorController>("editor");
   const view = getContext<ViewState>("view");
   const pagination = getContext<PaginationState>("pagination");
+  const reviewPanel = getContext<ReviewPanelState>("reviewPanel");
 
   const zoomPercent = $derived(Math.round(view.zoom * 100));
+  const openCommentCount = $derived(controller.comments.filter((t) => !t.resolved).length);
+  const suggestionCount = $derived.by(() => {
+    void controller.snapshot;
+    return findSuggestions(controller.doc, controller.suggestionMeta).length;
+  });
 </script>
 
 <div class="ow-status-bar">
@@ -22,6 +30,25 @@
     <span class="ow-status-item ow-status-save" class:dirty={controller.dirty}>
       {controller.dirty ? "Unsaved changes" : "Saved"}
     </span>
+    <button
+      class="ow-status-item ow-status-link"
+      class:active={reviewPanel.open && reviewPanel.tab === "comments"}
+      title="Comments"
+      onclick={() => reviewPanel.toggle("comments")}
+    >
+      {@html icons.iconComment}
+      {openCommentCount}
+    </button>
+    {#if suggestionCount > 0 || controller.snapshot.suggestingMode}
+      <button
+        class="ow-status-item ow-status-link"
+        class:active={reviewPanel.open && reviewPanel.tab === "changes"}
+        title="Tracked changes"
+        onclick={() => reviewPanel.toggle("changes")}
+      >
+        {suggestionCount} change{suggestionCount === 1 ? "" : "s"}
+      </button>
+    {/if}
   </div>
   <div class="ow-status-right">
     <button class="ow-icon-btn ow-status-btn" title="Zoom out" onclick={view.zoomOut}>{@html icons.iconZoomOut}</button>
@@ -75,6 +102,29 @@
 
   .ow-status-save.dirty {
     color: #b5872f;
+  }
+
+  .ow-status-link {
+    background: transparent;
+    border: none;
+    color: var(--ow-text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 3px;
+  }
+  .ow-status-link:hover {
+    background: var(--ow-hover-bg);
+    color: var(--ow-text);
+  }
+  .ow-status-link.active {
+    background: var(--ow-active-bg);
+    color: var(--ow-accent);
+  }
+  .ow-status-link :global(svg) {
+    width: 12px;
+    height: 12px;
+    vertical-align: -1px;
   }
 
   .ow-status-btn {

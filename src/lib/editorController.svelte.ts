@@ -1,10 +1,21 @@
 import { EditorView } from "prosemirror-view";
-import type { EditorState } from "prosemirror-state";
+import { TextSelection, type EditorState } from "prosemirror-state";
 import { undo, redo } from "prosemirror-history";
-import type { Node as PMNode } from "prosemirror-model";
+import type { Node as PMNode, Mark } from "prosemirror-model";
+import {
+  isSuggestChangesEnabled,
+  toggleSuggestChanges,
+  applySuggestion,
+  revertSuggestion,
+  applySuggestions,
+  revertSuggestions,
+  selectSuggestion,
+} from "@handlewithcare/prosemirror-suggest-changes";
 import { schema } from "@/editor/schema";
 import { buildEditorState, mountEditorView } from "@/editor/editorView";
 import { emptyDoc } from "@/editor/document";
+import { PaginationRuntime } from "@/editor/paginationPlugin";
+import { PAGE_SIZES, geometryFor, type PageGeometry } from "@/editor/pagination";
 import { countWords, type WordCount } from "@/editor/wordcount";
 import {
   markActive,
@@ -21,6 +32,9 @@ import {
   insertImage,
   insertTable,
 } from "@/editor/commands";
+import { addComment, replyToThread, setThreadResolved, deleteThread, findCommentAnchors, type CommentThread } from "@/editor/comments";
+import { reconcileSuggestionMeta, type SuggestionMetaStore } from "@/editor/trackChanges";
+import { getAuthorName } from "@/lib/authorIdentity";
 
 export interface BlockInfo {
   kind: "paragraph" | "heading";
@@ -45,6 +59,8 @@ export interface EditorSnapshot {
   canUndo: boolean;
   canRedo: boolean;
   wordCount: WordCount;
+  suggestingMode: boolean;
+  selectionEmpty: boolean;
 }
 
 function computeBlockInfo(state: EditorState): BlockInfo {
@@ -87,8 +103,27 @@ function computeSnapshot(state: EditorState): EditorSnapshot {
     canUndo: undo(state),
     canRedo: redo(state),
     wordCount: countWords(state.doc),
+    suggestingMode: isSuggestChangesEnabled(state),
+    selectionEmpty: state.selection.empty,
   };
 }
+
+// Character-level formatting marks format painter copies/clears. Deliberately
+// excludes structural marks (link, comment, insertion/deletion/modification)
+// — painting formatting onto other text shouldn't drag a hyperlink or a
+// comment thread along with it.
+const FORMAT_PAINTER_MARK_TYPES = () => [
+  schema.marks.bold,
+  schema.marks.italic,
+  schema.marks.underline,
+  schema.marks.strike,
+  schema.marks.superscript,
+  schema.marks.subscript,
+  schema.marks.textColor,
+  schema.marks.highlight,
+  schema.marks.fontFamily,
+  schema.marks.fontSize,
+];
 
 export class EditorController {
   view: EditorView | null = null;
@@ -98,10 +133,28 @@ export class EditorController {
   filePath = $state<string | null>(null);
   fileName = $state("Untitled document");
   fileFormat = $state<"owdoc" | "docx">("owdoc");
+  comments = $state<CommentThread[]>([]);
+  suggestionMeta = $state<SuggestionMetaStore>({});
+  formatPainterMarks = $state<readonly Mark[] | null>(null);
+  private formatPainterSticky = false;
+  /** Long-lived pagination control channel — survives loadDocument() reloads,
+   * see paginationPlugin.ts. Rebuilding the doc rebuilds the plugin instance,
+   * but this object stays the same so PageCanvas's geometry/zoom updates
+   * keep working across File > Open etc. */
+  private paginationRuntime: PaginationRuntime;
 
-  constructor(doc?: PMNode) {
-    this.pendingState = buildEditorState(doc ?? emptyDoc());
+  constructor(doc?: PMNode, onPageCount?: (count: number) => void) {
+    this.paginationRuntime = new PaginationRuntime(geometryFor(PAGE_SIZES.letter), 1, onPageCount);
+    this.pendingState = buildEditorState(doc ?? emptyDoc(), this.paginationRuntime);
     this.snapshot = computeSnapshot(this.pendingState);
+  }
+
+  /** Push a page-size/zoom change into the pagination plugin and trigger a
+   * remeasure. Call whenever ViewState's pageSize or zoom changes — those
+   * are plain Svelte state, not ProseMirror transactions, so the plugin
+   * can't observe them on its own. */
+  setPaginationGeometry(geometry: PageGeometry, zoom: number) {
+    this.paginationRuntime.setGeometry(geometry, zoom);
   }
 
   /** Bind the (already-constructed) editor to a DOM mount point. Safe to call once, on mount. */
@@ -109,19 +162,31 @@ export class EditorController {
     if (this.view) return;
     this.view = mountEditorView(mount, this.pendingState, (state) => {
       this.snapshot = computeSnapshot(state);
+      this.suggestionMeta = reconcileSuggestionMeta(state.doc, this.suggestionMeta, getAuthorName());
       this.dirty = true;
+    });
+    // Format painter applies on the next non-empty selection the user makes
+    // by dragging — mouseup is a simple, reliable signal for "selection just
+    // finished changing," without fighting ProseMirror's own transaction
+    // stream (a plain click to move the cursor intentionally does nothing;
+    // painter mode stays armed until an actual selection is made).
+    mount.addEventListener("mouseup", () => {
+      if (!this.formatPainterMarks) return;
+      queueMicrotask(() => this.applyFormatPainter());
     });
   }
 
   /** Replace the document wholesale — used by File > New / File > Open. */
-  loadDocument(doc: PMNode) {
-    const state = buildEditorState(doc);
+  loadDocument(doc: PMNode, comments: CommentThread[] = [], suggestionMeta: SuggestionMetaStore = {}) {
+    const state = buildEditorState(doc, this.paginationRuntime);
     if (this.view) {
       this.view.updateState(state);
     } else {
       this.pendingState = state;
     }
     this.snapshot = computeSnapshot(state);
+    this.comments = comments;
+    this.suggestionMeta = reconcileSuggestionMeta(state.doc, suggestionMeta, getAuthorName());
     this.dirty = false;
   }
 
@@ -179,4 +244,87 @@ export class EditorController {
 
   undo = () => this.run((s, d) => undo(s, d));
   redo = () => this.run((s, d) => redo(s, d));
+
+  // --- Comments -----------------------------------------------------------
+  addCommentToSelection = (text: string): CommentThread | null => {
+    if (!this.view) return null;
+    const thread = addComment(this.view.state, this.view.dispatch, getAuthorName(), text);
+    if (thread) {
+      this.comments = [...this.comments, thread];
+      this.focus();
+    }
+    return thread;
+  };
+
+  replyToComment = (threadId: string, text: string) => {
+    this.comments = replyToThread(this.comments, threadId, getAuthorName(), text);
+  };
+
+  resolveComment = (threadId: string) => {
+    this.comments = setThreadResolved(this.comments, threadId, true);
+  };
+
+  reopenComment = (threadId: string) => {
+    this.comments = setThreadResolved(this.comments, threadId, false);
+  };
+
+  deleteCommentThread = (threadId: string) => {
+    if (!this.view) return;
+    this.comments = deleteThread(this.view.state, this.view.dispatch, this.comments, threadId);
+  };
+
+  /** Move the cursor/selection to a comment thread's anchor and scroll it into view. */
+  selectCommentAnchor = (threadId: string) => {
+    if (!this.view) return;
+    const anchor = findCommentAnchors(this.view.state.doc).find((a) => a.threadId === threadId);
+    if (!anchor) return;
+    const selection = TextSelection.create(this.view.state.doc, anchor.from, anchor.to);
+    this.view.dispatch(this.view.state.tr.setSelection(selection).scrollIntoView());
+    this.focus();
+  };
+
+  // --- Track changes --------------------------------------------------------
+  toggleSuggesting = () => this.run((s, d) => toggleSuggestChanges(s, d));
+  acceptSuggestion = (id: string | number) => this.run((s, d) => applySuggestion(id)(s, d));
+  rejectSuggestion = (id: string | number) => this.run((s, d) => revertSuggestion(id)(s, d));
+  acceptAllSuggestions = () => this.run((s, d) => applySuggestions(s, d));
+  rejectAllSuggestions = () => this.run((s, d) => revertSuggestions(s, d));
+  selectSuggestionRange = (id: string | number) => this.run((s, d) => selectSuggestion(id)(s, d));
+
+  // --- Format painter -------------------------------------------------------
+  /** Capture the current selection's formatting. `sticky` keeps painting on
+   * every subsequent selection until cancelFormatPainter() instead of just once. */
+  copyFormat = (sticky = false) => {
+    if (!this.view) return;
+    const { state } = this.view;
+    const { from, to, empty } = state.selection;
+    if (empty) {
+      this.formatPainterMarks = state.selection.$from.marks();
+    } else {
+      let common: Mark[] | null = null;
+      state.doc.nodesBetween(from, to, (node) => {
+        if (!node.isText) return true;
+        common = common === null ? [...node.marks] : common.filter((m) => node.marks.some((nm) => nm.eq(m)));
+        return true;
+      });
+      this.formatPainterMarks = common ?? [];
+    }
+    this.formatPainterSticky = sticky;
+  };
+
+  cancelFormatPainter = () => {
+    this.formatPainterMarks = null;
+  };
+
+  private applyFormatPainter() {
+    if (!this.view || !this.formatPainterMarks) return;
+    const { state, dispatch } = this.view;
+    const { from, to, empty } = state.selection;
+    if (empty) return;
+    let tr = state.tr;
+    for (const markType of FORMAT_PAINTER_MARK_TYPES()) tr = tr.removeMark(from, to, markType);
+    for (const mark of this.formatPainterMarks) tr = tr.addMark(from, to, mark);
+    dispatch(tr);
+    if (!this.formatPainterSticky) this.formatPainterMarks = null;
+  }
 }

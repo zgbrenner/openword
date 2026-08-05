@@ -9,10 +9,13 @@
   import PageCanvas from "@/components/PageCanvas.svelte";
   import StatusBar from "@/components/StatusBar.svelte";
   import FindReplace from "@/components/FindReplace.svelte";
+  import ReviewPanel from "@/components/ReviewPanel.svelte";
   import { EditorController } from "@/lib/editorController.svelte";
   import { ViewState } from "@/lib/viewState.svelte";
   import { PaginationState } from "@/lib/paginationState.svelte";
+  import { ReviewPanelState } from "@/lib/reviewPanelState.svelte";
   import { isTauri } from "@/lib/tauriEnv";
+  import { getAuthorName, setAuthorName } from "@/lib/authorIdentity";
   import {
     newDocument,
     openDocumentDialog,
@@ -25,12 +28,14 @@
     notify,
   } from "@/lib/fileApi";
 
-  const controller = new EditorController(newDocument());
-  const view = new ViewState();
   const pagination = new PaginationState();
+  const controller = new EditorController(newDocument(), (count) => (pagination.pageCount = count));
+  const view = new ViewState();
+  const reviewPanel = new ReviewPanelState();
   setContext("editor", controller);
   setContext("view", view);
   setContext("pagination", pagination);
+  setContext("reviewPanel", reviewPanel);
 
   let findOpen = $state(false);
   let findWithReplace = $state(false);
@@ -48,7 +53,7 @@
 
   async function doSave() {
     if (controller.filePath) {
-      await writeDocument(controller.doc, controller.filePath, controller.fileFormat);
+      await writeDocument(controller.doc, controller.comments, controller.suggestionMeta, controller.filePath, controller.fileFormat);
       controller.markDirty(false);
       await clearRecoverySnapshot();
     } else {
@@ -57,7 +62,12 @@
   }
 
   async function doSaveAs() {
-    const result = await saveDocumentAsDialog(controller.doc, controller.fileName.replace(/\.[^.]+$/, ""));
+    const result = await saveDocumentAsDialog(
+      controller.doc,
+      controller.comments,
+      controller.suggestionMeta,
+      controller.fileName.replace(/\.[^.]+$/, ""),
+    );
     if (!result) return;
     controller.filePath = result.path;
     controller.fileFormat = result.format;
@@ -72,7 +82,7 @@
       filters: [{ name: "Word Document", extensions: ["docx"] }],
     });
     if (!path) return;
-    await writeDocument(controller.doc, path, "docx");
+    await writeDocument(controller.doc, controller.comments, controller.suggestionMeta, path, "docx");
   }
 
   async function doOpen() {
@@ -87,8 +97,15 @@
     applyOpenResult(result);
   }
 
-  function applyOpenResult(result: { doc: any; path: string; format: "owdoc" | "docx"; name: string }) {
-    controller.loadDocument(result.doc);
+  function applyOpenResult(result: {
+    doc: any;
+    comments: any[];
+    suggestionMeta: Record<string, any>;
+    path: string;
+    format: "owdoc" | "docx";
+    name: string;
+  }) {
+    controller.loadDocument(result.doc, result.comments, result.suggestionMeta);
     controller.filePath = result.path;
     controller.fileFormat = result.format;
     controller.fileName = result.name;
@@ -158,8 +175,11 @@
         return;
       }
       case "insert_page_break": return controller.insertPageBreak();
-      case "insert_comment":
-        return notify("Comments", "Comments aren't implemented yet — tracked as a follow-up in ARCHITECTURE.md.");
+      case "insert_comment": {
+        const toolbar = document.querySelector<HTMLButtonElement>('[title="Insert comment (Ctrl+Alt+M)"]');
+        toolbar?.click();
+        return;
+      }
 
       case "format_bold": return controller.toggleBold();
       case "format_italic": return controller.toggleItalic();
@@ -179,6 +199,17 @@
       }
       case "tools_spelling":
         return notify("Spelling and grammar", "Spellcheck uses your OS's built-in checker (right-click a misspelled word). A dedicated grammar checker is a possible future add-on, kept out of the lightweight core.");
+      case "tools_track_changes":
+        return controller.toggleSuggesting();
+      case "tools_accept_all_changes":
+        return controller.acceptAllSuggestions();
+      case "tools_reject_all_changes":
+        return controller.rejectAllSuggestions();
+      case "tools_set_author_name": {
+        const name = window.prompt("Your name (used on comments and tracked changes):", getAuthorName());
+        if (name) setAuthorName(name);
+        return;
+      }
 
       case "table_insert_row_below": return tableCommand(addRowAfter);
       case "table_insert_column_right": return tableCommand(addColumnAfter);
@@ -219,7 +250,7 @@
           title: "Recover document",
         });
         if (restore) {
-          controller.loadDocument(recovered);
+          controller.loadDocument(recovered.doc, recovered.comments, recovered.suggestionMeta);
           controller.markDirty(true);
         } else {
           await clearRecoverySnapshot();
@@ -228,7 +259,7 @@
     })();
 
     const autosave = window.setInterval(() => {
-      if (controller.dirty) writeRecoverySnapshot(controller.doc).catch(() => {});
+      if (controller.dirty) writeRecoverySnapshot(controller.doc, controller.comments, controller.suggestionMeta).catch(() => {});
     }, 20000);
 
     let unlistenClose: (() => void) | undefined;
@@ -257,17 +288,25 @@
   <Toolbar />
   <Ruler />
   <div class="ow-canvas-area">
-    <PageCanvas />
-    <FindReplace bind:open={findOpen} bind:withReplace={findWithReplace} />
+    <div class="ow-canvas-main">
+      <PageCanvas />
+      <FindReplace bind:open={findOpen} bind:withReplace={findWithReplace} />
+    </div>
+    <ReviewPanel />
   </div>
   <StatusBar />
 </div>
 
 <style>
   .ow-canvas-area {
-    position: relative;
     flex: 1;
     display: flex;
     min-height: 0;
+  }
+  .ow-canvas-main {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-width: 0;
   }
 </style>

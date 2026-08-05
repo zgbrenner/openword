@@ -96,6 +96,12 @@ pub fn build<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let tools_menu = SubmenuBuilder::new(app, "Tools")
         .item(&item("tools_word_count", "Word count", Some("CmdOrCtrl+Shift+C"))?)
         .item(&item("tools_spelling", "Spelling and grammar", None)?)
+        .separator()
+        .item(&item("tools_track_changes", "Track changes", None)?)
+        .item(&item("tools_accept_all_changes", "Accept all changes", None)?)
+        .item(&item("tools_reject_all_changes", "Reject all changes", None)?)
+        .separator()
+        .item(&item("tools_set_author_name", "Set your name...", None)?)
         .build()?;
 
     let table_menu = SubmenuBuilder::new(app, "Table")
