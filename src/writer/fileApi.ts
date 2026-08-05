@@ -2,6 +2,12 @@ import { basename } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { exists, readFile, remove, rename, writeFile } from "@tauri-apps/plugin-fs";
 import type { WriterClient } from "./client";
+import {
+  capturePackage,
+  mergeWriterPackage,
+  type PackageCompatibilityReport,
+  type PackagePreservationSnapshot,
+} from "./packagePassthrough";
 import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
@@ -9,6 +15,7 @@ export interface WriterOpenResult {
   path: string;
   name: string;
   format: WriterFormat;
+  preservation: PackagePreservationSnapshot;
 }
 
 export interface WriterSaveResult {
@@ -16,6 +23,8 @@ export interface WriterSaveResult {
   format: WriterFormat;
   bytesWritten: number;
   recoveryPath: string | null;
+  preservation: PackagePreservationSnapshot;
+  compatibilityReport: PackageCompatibilityReport;
 }
 
 const OPEN_FILTERS = [
@@ -61,11 +70,13 @@ export async function openWriterDocumentBytes(
   format: WriterFormat,
   client: WriterClient,
   host: WriterRuntimeHost,
-): Promise<void> {
+): Promise<PackagePreservationSnapshot> {
+  const preservation = await capturePackage(bytes, format);
   const sourcePath = virtualPath("source", format);
   host.writeVirtualFile(sourcePath, bytes);
   try {
     await client.openPath(virtualUrl(sourcePath));
+    return preservation;
   } finally {
     host.removeVirtualFile(sourcePath);
   }
@@ -77,14 +88,16 @@ export async function openWriterDocumentAtPath(
   host: WriterRuntimeHost,
 ): Promise<WriterOpenResult> {
   const format = formatFromPath(path);
-  await openWriterDocumentBytes(await readFile(path), format, client, host);
-  return { path, name: await basename(path), format };
+  const bytes = await readFile(path);
+  const preservation = await openWriterDocumentBytes(bytes, format, client, host);
+  return { path, name: await basename(path), format, preservation };
 }
 
 export async function saveWriterDocumentAsDialog(
   client: WriterClient,
   host: WriterRuntimeHost,
   suggestedBaseName = "Document1",
+  preservation: PackagePreservationSnapshot | null = null,
 ): Promise<WriterSaveResult | null> {
   const path = await save({
     defaultPath: `${suggestedBaseName}.docx`,
@@ -94,7 +107,7 @@ export async function saveWriterDocumentAsDialog(
     ],
   });
   if (!path) return null;
-  return saveWriterDocument(path, formatFromPath(path), client, host);
+  return saveWriterDocument(path, formatFromPath(path), client, host, preservation);
 }
 
 export async function saveWriterDocument(
@@ -102,6 +115,7 @@ export async function saveWriterDocument(
   format: WriterFormat,
   client: WriterClient,
   host: WriterRuntimeHost,
+  preservation: PackagePreservationSnapshot | null = null,
 ): Promise<WriterSaveResult> {
   const stagedVirtualPath = virtualPath("export", format);
   await client.savePath(virtualUrl(stagedVirtualPath), format);
@@ -113,8 +127,16 @@ export async function saveWriterDocument(
     host.removeVirtualFile(stagedVirtualPath);
   }
 
-  const recoveryPath = await replaceWithStagedFile(targetPath, bytes);
-  return { path: targetPath, format, bytesWritten: bytes.byteLength, recoveryPath };
+  const merged = await mergeWriterPackage(bytes, format, preservation);
+  const recoveryPath = await replaceWithStagedFile(targetPath, merged.bytes);
+  return {
+    path: targetPath,
+    format,
+    bytesWritten: merged.bytes.byteLength,
+    recoveryPath,
+    preservation: merged.preservation,
+    compatibilityReport: merged.compatibilityReport,
+  };
 }
 
 /**
