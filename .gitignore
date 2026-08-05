@@ -11,6 +11,7 @@ src-tauri/gen/
 .engine-work/
 public/writer-runtime/*
 !public/writer-runtime/.gitkeep
+!public/writer-runtime/openword_writer_commands.js
 !public/writer-runtime/openword_writer_thread.js
 engine/runtime.lock.json.tmp
 
