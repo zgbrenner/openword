@@ -9,11 +9,13 @@ const workdir = resolve(process.env.OPENWORD_ENGINE_WORKDIR || resolve(root, ".e
 const runtimeSource = resolve(process.argv[2] || resolve(workdir, "libreoffice/workdir/installation/LibreOffice/emscripten"));
 const zetaSource = resolve(process.argv[3] || resolve(workdir, "zetajs/source/zeta.js"));
 const destination = resolve(root, "public/writer-runtime");
+const manifest = JSON.parse(readFileSync(resolve(root, "engine/manifest.json"), "utf8"));
 const lock = JSON.parse(readFileSync(resolve(root, "engine/runtime.lock.json"), "utf8"));
-const binaryFiles = ["soffice.js", "soffice.wasm", "soffice.data", "soffice.data.js.metadata"];
+const generatedFiles = ["soffice.js", "soffice.wasm", "soffice.data", "soffice.data.js.metadata"];
+const committedBridgeFiles = ["openword_writer_commands.js", "openword_writer_thread.js"];
 
 mkdirSync(destination, { recursive: true });
-for (const name of binaryFiles) {
+for (const name of generatedFiles) {
   const source = resolve(runtimeSource, name);
   if (!existsSync(source)) throw new Error(`LibreOffice build output is missing ${source}`);
   copyFileSync(source, resolve(destination, name));
@@ -21,14 +23,17 @@ for (const name of binaryFiles) {
 if (!existsSync(zetaSource)) throw new Error(`zetajs source is missing ${zetaSource}`);
 copyFileSync(zetaSource, resolve(destination, "zeta.js"));
 
-const workerPath = resolve(destination, "openword_writer_thread.js");
-if (!existsSync(workerPath)) {
-  throw new Error("OpenWord Writer worker bridge is missing from public/writer-runtime");
+for (const name of committedBridgeFiles) {
+  if (!existsSync(resolve(destination, name))) {
+    throw new Error(`OpenWord Writer bridge source is missing: ${name}`);
+  }
 }
 
 const files = {};
-for (const name of [...binaryFiles, "zeta.js", "openword_writer_thread.js"]) {
-  const bytes = readFileSync(resolve(destination, name));
+for (const name of manifest.runtimeFiles) {
+  const path = resolve(destination, name);
+  if (!existsSync(path)) throw new Error(`Runtime artifact is missing: ${name}`);
+  const bytes = readFileSync(path);
   files[name] = {
     bytes: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),
