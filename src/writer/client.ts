@@ -72,6 +72,10 @@ export class WriterClient {
     await this.request("document.save", { path, format });
   }
 
+  async snapshotPath(path: string, format: WriterFormat): Promise<void> {
+    await this.request("document.snapshot", { path, format });
+  }
+
   async execute(command: WriterCommand): Promise<void> {
     await this.request("command.execute", { command });
   }
