@@ -98,6 +98,10 @@ function serializeXml(document: XMLDocument): Uint8Array {
   return textEncoder.encode(new XMLSerializer().serializeToString(document));
 }
 
+function markRepaired(metadataRepaired: string[], path: string): void {
+  if (!metadataRepaired.includes(path)) metadataRepaired.push(path);
+}
+
 function relationshipSignature(element: Element): string {
   return [
     element.getAttribute("Type") ?? "",
@@ -168,7 +172,7 @@ async function mergeDocxContentTypes(
 
     if (changed) {
       zip.file(path, serializeXml(outputDocument));
-      metadataRepaired.push(path);
+      markRepaired(metadataRepaired, path);
     }
   } catch (error) {
     warnings.push(error instanceof Error ? error.message : String(error));
@@ -222,7 +226,77 @@ async function mergeDocxRelationships(
 
       if (changed) {
         zip.file(original.path, serializeXml(outputDocument));
-        metadataRepaired.push(original.path);
+        markRepaired(metadataRepaired, original.path);
+      }
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+async function scrubDocxContentTypes(
+  zip: JSZip,
+  blockedPaths: Set<string>,
+  metadataRepaired: string[],
+  warnings: string[],
+): Promise<void> {
+  const path = "[Content_Types].xml";
+  const file = zip.file(path);
+  if (!file || blockedPaths.size === 0) return;
+
+  try {
+    const document = parseXml(await file.async("uint8array"), path);
+    let changed = false;
+    for (const element of Array.from(document.getElementsByTagNameNS(CONTENT_TYPES_NS, "Override"))) {
+      const partName = (element.getAttribute("PartName") ?? "").replace(/^\//, "");
+      if (!blockedPaths.has(partName)) continue;
+      element.remove();
+      changed = true;
+    }
+    if (changed) {
+      zip.file(path, serializeXml(document));
+      markRepaired(metadataRepaired, path);
+    }
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function scrubDocxRelationships(
+  zip: JSZip,
+  blockedPaths: Set<string>,
+  metadataRepaired: string[],
+  warnings: string[],
+): Promise<void> {
+  if (blockedPaths.size === 0) return;
+  const relationshipFiles = Object.values(zip.files)
+    .filter((file) => !file.dir && file.name.endsWith(".rels"));
+
+  for (const file of relationshipFiles) {
+    try {
+      const document = parseXml(await file.async("uint8array"), file.name);
+      let changed = false;
+      for (const relationship of Array.from(
+        document.getElementsByTagNameNS(RELATIONSHIPS_NS, "Relationship"),
+      )) {
+        if ((relationship.getAttribute("TargetMode") ?? "").toLowerCase() === "external") continue;
+        const target = relationship.getAttribute("Target");
+        if (!target) continue;
+        try {
+          const resolvedTarget = vault().resolveRelationshipTarget(file.name, target);
+          if (!resolvedTarget || !blockedPaths.has(resolvedTarget)) continue;
+          relationship.remove();
+          changed = true;
+        } catch (error) {
+          // Malformed internal targets are not safe to retain in a rewritten package.
+          relationship.remove();
+          changed = true;
+          warnings.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (changed) {
+        zip.file(file.name, serializeXml(document));
+        markRepaired(metadataRepaired, file.name);
       }
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : String(error));
@@ -275,10 +349,63 @@ async function mergeOdtManifest(
 
     if (changed) {
       zip.file(path, serializeXml(outputDocument));
-      metadataRepaired.push(path);
+      markRepaired(metadataRepaired, path);
     }
   } catch (error) {
     warnings.push(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function scrubOdtManifest(
+  zip: JSZip,
+  blockedPaths: Set<string>,
+  metadataRepaired: string[],
+  warnings: string[],
+): Promise<void> {
+  const path = "META-INF/manifest.xml";
+  const file = zip.file(path);
+  if (!file || blockedPaths.size === 0) return;
+
+  try {
+    const document = parseXml(await file.async("uint8array"), path);
+    const survivingPaths = new Set(
+      Object.values(zip.files).filter((entry) => !entry.dir).map((entry) => entry.name),
+    );
+    let changed = false;
+    for (const fileEntry of Array.from(
+      document.getElementsByTagNameNS(ODF_MANIFEST_NS, "file-entry"),
+    )) {
+      const fullPath = manifestFullPath(fileEntry);
+      const exactBlocked = blockedPaths.has(fullPath);
+      const emptyBlockedDirectory =
+        fullPath.endsWith("/") &&
+        Array.from(blockedPaths).some((blocked) => blocked.startsWith(fullPath)) &&
+        !Array.from(survivingPaths).some((surviving) => surviving.startsWith(fullPath));
+      if (!exactBlocked && !emptyBlockedDirectory) continue;
+      fileEntry.remove();
+      changed = true;
+    }
+    if (changed) {
+      zip.file(path, serializeXml(document));
+      markRepaired(metadataRepaired, path);
+    }
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function repairPackageMetadata(
+  zip: JSZip,
+  format: WriterFormat,
+  blockedPaths: Set<string>,
+  metadataRepaired: string[],
+  warnings: string[],
+): Promise<void> {
+  if (format === "docx") {
+    await scrubDocxContentTypes(zip, blockedPaths, metadataRepaired, warnings);
+    await scrubDocxRelationships(zip, blockedPaths, metadataRepaired, warnings);
+  } else {
+    await scrubOdtManifest(zip, blockedPaths, metadataRepaired, warnings);
   }
 }
 
@@ -320,7 +447,7 @@ async function generateArchive(zip: JSZip): Promise<Uint8Array> {
     compression: "DEFLATE",
     compressionOptions: { level: 6 },
     platform: "UNIX",
-    streamFiles: true,
+    streamFiles: false,
   });
 }
 
@@ -344,21 +471,28 @@ export async function mergeWriterPackage(
     const emptySnapshot = vault().capture(format, []);
     const filtered = vault().merge(emptySnapshot, writerEntries);
     const outputZip = await archiveFromEntries(filtered.entries, format);
+    const metadataRepaired: string[] = [];
+    const warnings: string[] = [];
+    const blockedPaths = new Set([
+      ...filtered.report.droppedSignatures,
+      ...filtered.report.blockedExecutables,
+    ]);
+    await repairPackageMetadata(outputZip, format, blockedPaths, metadataRepaired, warnings);
     const bytes = await generateArchive(outputZip);
     const notCarriedAcrossFormat = preservation
       ? preservation.entries
           .filter((entry) => entry.classification === "preserve-opaque")
           .map((entry) => entry.path)
       : [];
+    if (preservation) warnings.push("Opaque package parts were not copied across document formats.");
     return {
       bytes,
       preservation: await capturePackage(bytes, format),
       compatibilityReport: freezeReport(filtered.report, {
+        metadataRepaired,
         formatChanged: Boolean(preservation),
         notCarriedAcrossFormat,
-        warnings: preservation
-          ? ["Opaque package parts were not copied across document formats."]
-          : [],
+        warnings,
       }),
     };
   }
@@ -366,6 +500,10 @@ export async function mergeWriterPackage(
   const merged = vault().merge(preservation, writerEntries);
   const outputZip = await archiveFromEntries(merged.entries, format);
   const restoredPaths = new Set(merged.report.restored);
+  const blockedPaths = new Set([
+    ...merged.report.droppedSignatures,
+    ...merged.report.blockedExecutables,
+  ]);
   const metadataRepaired: string[] = [];
   const warnings: string[] = [];
 
@@ -375,6 +513,7 @@ export async function mergeWriterPackage(
   } else {
     await mergeOdtManifest(outputZip, preservation, restoredPaths, metadataRepaired, warnings);
   }
+  await repairPackageMetadata(outputZip, format, blockedPaths, metadataRepaired, warnings);
 
   const bytes = await generateArchive(outputZip);
   return {
