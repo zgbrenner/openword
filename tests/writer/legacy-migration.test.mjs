@@ -22,6 +22,14 @@ test("migration detaches the document from the legacy path and requires Save As"
   assert.match(fileApi, /must be saved as DOCX or ODT/);
 });
 
+test("application marks migrated documents unsaved and explains the one-way conversion", () => {
+  const app = read("src/App.svelte");
+  assert.match(app, /if \(result\.migration\)/);
+  assert.match(app, /writerState\.dirty = true/);
+  assert.match(app, /result\.migration\.message/);
+  assert.match(app, /Legacy document converted/);
+});
+
 test("new Writer documents never serialize back to owdoc", () => {
   const fileApi = read("src/writer/fileApi.ts");
   const saveFilterSection = fileApi.slice(fileApi.indexOf("saveWriterDocumentAsDialog"));
@@ -31,7 +39,7 @@ test("new Writer documents never serialize back to owdoc", () => {
   }, /Unsupported Writer document format/);
 });
 
- test("native shell still routes legacy files to the migration importer", () => {
+test("native shell still routes legacy files to the migration importer", () => {
   const rust = read("src-tauri/src/lib.rs");
   const config = read("src-tauri/tauri.conf.json");
   assert.match(rust, /ends_with\("\.owdoc"\)/);
