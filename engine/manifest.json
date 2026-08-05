@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sources": {
     "libreoffice": {
       "repository": "https://github.com/LibreOffice/core.git",
@@ -9,6 +9,10 @@
       "repository": "https://github.com/allotropia/zetajs.git",
       "ref": "refs/tags/v1.2.0"
     },
+    "emsdk": {
+      "repository": "https://github.com/emscripten-core/emsdk.git",
+      "ref": "refs/tags/3.1.65"
+    },
     "emscripten": {
       "repository": "https://github.com/allotropia/emscripten.git",
       "ref": "refs/heads/fixed-3.1.65"
@@ -16,7 +20,18 @@
     "qt5": {
       "repository": "https://github.com/allotropia/qt5.git",
       "ref": "refs/heads/5.15.2+wasm"
+    },
+    "qtbase": {
+      "repository": "https://github.com/allotropia/qtbase.git",
+      "ref": "refs/heads/5.15.2+wasm"
     }
+  },
+  "build": {
+    "host": "linux-x86_64",
+    "emscriptenVersion": "3.1.65",
+    "minimumMemoryGiB": 64,
+    "libreOfficeDistro": "LibreOfficeWASM32",
+    "networkEnabled": false
   },
   "runtimeDirectory": "public/writer-runtime",
   "runtimeFiles": [
