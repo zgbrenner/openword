@@ -41,6 +41,7 @@
     "soffice.data.js.metadata",
     "zeta.js",
     "openword_writer_commands.js",
+    "openword_writer_page_styles.js",
     "openword_writer_thread.js"
   ],
   "security": {
