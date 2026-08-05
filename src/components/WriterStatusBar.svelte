@@ -35,6 +35,12 @@
     <span class="ow-writer-dot" aria-hidden="true">•</span>
     <span>{state.fileName}</span>
     {#if state.dirty}<span class="ow-writer-unsaved">Unsaved</span>{/if}
+    {#if state.requiresSaveAs}
+      <span
+        class="ow-writer-migration"
+        title="Legacy document converted into the Writer engine. Save As DOCX or ODT to continue."
+      >Legacy document converted · Save As required</span>
+    {/if}
   </div>
   <div class="ow-writer-status-secondary">
     {#if report}
@@ -90,12 +96,25 @@
   .ow-writer-dot { opacity: 0.55; }
 
   .ow-writer-unsaved,
+  .ow-writer-migration,
   .warning {
     color: var(--ow-accent);
     font-weight: 600;
   }
 
+  .ow-writer-migration {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 900px) {
+    .ow-writer-migration { max-width: 150px; }
+  }
+
   @media (max-width: 780px) {
-    .ow-writer-status-secondary span:nth-last-child(n + 3) { display: none; }
+    .ow-writer-status-secondary span:nth-last-child(n + 3),
+    .ow-writer-migration { display: none; }
   }
 </style>
