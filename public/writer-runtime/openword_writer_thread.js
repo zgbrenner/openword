@@ -75,7 +75,20 @@ function hideDocumentChrome() {
 }
 
 function clearListeners() {
-  statusListeners.length = 0;
+  for (const entry of statusListeners.splice(0)) {
+    try {
+      entry.dispatchObject.removeStatusListener(entry.listener, entry.urlObject);
+    } catch {
+      // The frame may already be disposing.
+    }
+  }
+  if (model && modifyListener && typeof model.removeModifyListener === "function") {
+    try {
+      model.removeModifyListener(modifyListener);
+    } catch {
+      // The model may already be disposing.
+    }
+  }
   modifyListener = null;
 }
 
@@ -85,6 +98,7 @@ function emitFormatting() {
 
 function addFormattingStatus(id, key) {
   const urlObject = transformUrl(`.uno:${id}`);
+  const dispatchObject = queryDispatch(urlObject);
   const listener = zetajs.unoObject([css.frame.XStatusListener], {
     disposing() {},
     statusChanged(state) {
@@ -93,8 +107,8 @@ function addFormattingStatus(id, key) {
       emitFormatting();
     },
   });
-  queryDispatch(urlObject).addStatusListener(listener, urlObject);
-  statusListeners.push(listener);
+  dispatchObject.addStatusListener(listener, urlObject);
+  statusListeners.push({ dispatchObject, listener, urlObject });
 }
 
 function attachDocumentListeners() {
@@ -128,6 +142,7 @@ function disposeCurrentModel() {
 
 function activateModel(nextModel) {
   disposeCurrentModel();
+  if (!nextModel) throw new Error("Writer did not return a document model");
   model = nextModel;
   controller = model.getCurrentController();
   hideDocumentChrome();
@@ -139,27 +154,40 @@ function newDocument() {
   activateModel(desktop.loadComponentFromURL("private:factory/swriter", "_default", 0, []));
 }
 
-function openDocument(path) {
-  if (typeof path !== "string" || !path.startsWith("file:///")) {
-    throw new Error("Writer can only open local virtual filesystem URLs");
+function assertVirtualFileUrl(path) {
+  if (typeof path !== "string" || !path.startsWith("file:///tmp/openword/")) {
+    throw new Error("Writer can only access OpenWord's local virtual filesystem directory");
   }
+}
+
+function openDocument(path) {
+  assertVirtualFileUrl(path);
   activateModel(desktop.loadComponentFromURL(path, "_default", 0, []));
 }
 
-function saveDocument(path, format) {
+function filterNameFor(format) {
+  if (format === "odt") return "writer8";
+  if (format === "docx") return "Office Open XML Text";
+  throw new Error(`Unsupported Writer format: ${format}`);
+}
+
+function writeDocument(path, format, markClean) {
   if (!model) throw new Error("No Writer document is active");
-  if (typeof path !== "string" || !path.startsWith("file:///")) {
-    throw new Error("Writer can only save to local virtual filesystem URLs");
-  }
-  const filterName = format === "odt" ? "writer8" : format === "docx" ? "Office Open XML Text" : null;
-  if (!filterName) throw new Error(`Unsupported Writer format: ${format}`);
+  assertVirtualFileUrl(path);
 
   const properties = [
-    new css.beans.PropertyValue({ Name: "FilterName", Value: filterName }),
+    new css.beans.PropertyValue({ Name: "FilterName", Value: filterNameFor(format) }),
     new css.beans.PropertyValue({ Name: "Overwrite", Value: true }),
   ];
-  model.storeAsURL(path, properties);
-  postEvent("document.changed", { dirty: false });
+
+  // storeToURL exports to OpenWord's temporary virtual file without changing
+  // Writer's internal document URL to a path that OpenWord will immediately
+  // remove. Recovery snapshots deliberately leave modified state untouched.
+  model.storeToURL(path, properties);
+  if (markClean) {
+    if (typeof model.setModified === "function") model.setModified(false);
+    postEvent("document.changed", { dirty: false });
+  }
 }
 
 function executeCommand(command) {
@@ -188,7 +216,11 @@ function bindRequests() {
           respond(request.id);
           return;
         case "document.save":
-          saveDocument(request.params?.path, request.params?.format);
+          writeDocument(request.params?.path, request.params?.format, true);
+          respond(request.id);
+          return;
+        case "document.snapshot":
+          writeDocument(request.params?.path, request.params?.format, false);
           respond(request.id);
           return;
         case "command.execute":
@@ -201,7 +233,7 @@ function bindRequests() {
     } catch (error) {
       const code = request.method === "document.open"
         ? "OPEN_FAILED"
-        : request.method === "document.save"
+        : request.method === "document.save" || request.method === "document.snapshot"
           ? "SAVE_FAILED"
           : request.method === "command.execute"
             ? "COMMAND_FAILED"
