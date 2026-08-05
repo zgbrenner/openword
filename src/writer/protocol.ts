@@ -13,7 +13,11 @@ export type WriterCommand =
   | { type: "paragraph.alignJustify" }
   | { type: "list.toggleBullets" }
   | { type: "list.toggleNumbering" }
-  | { type: "insert.pageBreak" };
+  | { type: "insert.pageBreak" }
+  | { type: "header.setEnabled"; enabled: boolean }
+  | { type: "footer.setEnabled"; enabled: boolean }
+  | { type: "pageStyle.setDifferentFirstPage"; enabled: boolean }
+  | { type: "pageStyle.setDifferentOddEven"; enabled: boolean };
 
 export type WriterRequestMethod =
   | "engine.ping"
@@ -58,6 +62,17 @@ export type WriterEvent =
       kind: "event";
       event: "selection.paragraph";
       payload: { alignment: ParagraphAlignment; bullets: boolean; numbering: boolean };
+    }
+  | {
+      kind: "event";
+      event: "selection.pageStyle";
+      payload: {
+        pageStyleName: string;
+        headerEnabled: boolean;
+        footerEnabled: boolean;
+        differentFirstPage: boolean;
+        differentOddEven: boolean;
+      };
     }
   | { kind: "event"; event: "engine.failure"; payload: WriterError };
 
