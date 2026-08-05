@@ -105,3 +105,5 @@ var OPENWORD_PACKAGE_VAULT = Object.freeze({
     return OPENWORD_PACKAGE_PRESERVATION.normalize(targetSegments.join("/"));
   },
 });
+
+globalThis.OPENWORD_PACKAGE_VAULT = OPENWORD_PACKAGE_VAULT;
