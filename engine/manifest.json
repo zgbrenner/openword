@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "libreoffice": {
+      "repository": "https://github.com/LibreOffice/core.git",
+      "ref": "refs/heads/distro/allotropia/zeta-24-2"
+    },
+    "zetajs": {
+      "repository": "https://github.com/allotropia/zetajs.git",
+      "ref": "refs/tags/v1.2.0"
+    },
+    "emscripten": {
+      "repository": "https://github.com/allotropia/emscripten.git",
+      "ref": "refs/heads/fixed-3.1.65"
+    },
+    "qt5": {
+      "repository": "https://github.com/allotropia/qt5.git",
+      "ref": "refs/heads/5.15.2+wasm"
+    }
+  },
+  "runtimeDirectory": "public/writer-runtime",
+  "runtimeFiles": [
+    "soffice.js",
+    "soffice.wasm",
+    "soffice.data",
+    "soffice.data.js.metadata",
+    "zeta.js",
+    "openword_writer_thread.js"
+  ],
+  "security": {
+    "allowNetwork": false,
+    "allowMacros": false,
+    "allowExtensions": false,
+    "allowProxySockets": false
+  }
+}
