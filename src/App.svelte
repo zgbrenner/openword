@@ -369,7 +369,7 @@
       onfailure={(error) => writerState.setStartupFailure(error)}
     />
   </main>
-  <WriterStatusBar state={writerState} />
+  <WriterStatusBar state={writerState} report={compatibilityReport} />
 </div>
 
 <style>
