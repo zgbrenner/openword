@@ -7,12 +7,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDir, "../..");
 const manifest = JSON.parse(readFileSync(resolve(root, "engine/manifest.json"), "utf8"));
 const lockPath = resolve(root, "engine/runtime.lock.json");
+const runtimeDir = resolve(root, manifest.runtimeDirectory);
+const artifactManifestPath = resolve(runtimeDir, "runtime-manifest.json");
 const missing = [];
 
 for (const name of manifest.runtimeFiles) {
-  if (!existsSync(resolve(root, manifest.runtimeDirectory, name))) missing.push(name);
+  if (!existsSync(resolve(runtimeDir, name))) missing.push(name);
 }
 if (!existsSync(lockPath)) missing.push("engine/runtime.lock.json");
+if (!existsSync(artifactManifestPath)) missing.push("runtime-manifest.json");
 
 if (missing.length) {
   console.error(`Writer runtime is incomplete:\n${missing.map((name) => `- ${name}`).join("\n")}`);
@@ -26,7 +29,22 @@ for (const [name, source] of Object.entries(lock.sources)) {
   }
 }
 
-for (const file of manifest.runtimeFiles) {
-  const bytes = readFileSync(resolve(root, manifest.runtimeDirectory, file));
-  console.log(`${createHash("sha256").update(bytes).digest("hex")}  ${file}`);
+const artifacts = JSON.parse(readFileSync(artifactManifestPath, "utf8"));
+for (const [name, source] of Object.entries(lock.sources)) {
+  const embedded = artifacts.sourceLock?.[name];
+  if (!embedded || embedded.commit !== source.commit || embedded.repository !== source.repository) {
+    throw new Error(`Writer runtime source mismatch for ${name}`);
+  }
 }
+
+for (const file of manifest.runtimeFiles) {
+  const bytes = readFileSync(resolve(runtimeDir, file));
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const recorded = artifacts.files?.[file];
+  if (!recorded || recorded.sha256 !== sha256 || recorded.bytes !== bytes.byteLength) {
+    throw new Error(`Writer runtime artifact mismatch: ${file}`);
+  }
+  console.log(`${sha256}  ${file}`);
+}
+
+console.log("Writer runtime source lock and artifact hashes verified.");
