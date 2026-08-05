@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,14 @@ for (const name of generatedFiles) {
   if (!existsSync(source)) throw new Error(`LibreOffice build output is missing ${source}`);
   copyFileSync(source, resolve(destination, name));
 }
+
+for (const name of manifest.optionalRuntimeFiles ?? []) {
+  const source = resolve(runtimeSource, name);
+  const target = resolve(destination, name);
+  if (existsSync(source)) copyFileSync(source, target);
+  else if (existsSync(target)) rmSync(target);
+}
+
 if (!existsSync(zetaSource)) throw new Error(`zetajs source is missing ${zetaSource}`);
 copyFileSync(zetaSource, resolve(destination, "zeta.js"));
 
@@ -33,8 +41,12 @@ for (const name of committedBridgeFiles) {
   }
 }
 
+const installedFiles = [
+  ...manifest.runtimeFiles,
+  ...(manifest.optionalRuntimeFiles ?? []).filter((name) => existsSync(resolve(destination, name))),
+];
 const files = {};
-for (const name of manifest.runtimeFiles) {
+for (const name of installedFiles) {
   const path = resolve(destination, name);
   if (!existsSync(path)) throw new Error(`Runtime artifact is missing: ${name}`);
   const bytes = readFileSync(path);
