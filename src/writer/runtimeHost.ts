@@ -8,6 +8,7 @@ export const REQUIRED_RUNTIME_FILES = [
   "soffice.data.js.metadata",
   "zeta.js",
   "openword_writer_commands.js",
+  "openword_writer_page_styles.js",
   "openword_writer_thread.js",
 ] as const;
 
@@ -74,6 +75,7 @@ export class WriterRuntimeHost {
       uno_scripts: [
         absoluteAssetUrl("zeta.js", this.baseUrl),
         absoluteAssetUrl("openword_writer_commands.js", this.baseUrl),
+        absoluteAssetUrl("openword_writer_page_styles.js", this.baseUrl),
         absoluteAssetUrl("openword_writer_thread.js", this.baseUrl),
       ],
       locateFile: (path: string, prefix?: string) => new URL(path, prefix || runtimeBaseUrl).href,
