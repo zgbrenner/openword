@@ -119,6 +119,18 @@
   <div class="ow-writer-group" aria-label="Header and footer">
     <button
       type="button"
+      title="Edit header"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "header.edit" })}
+    >Edit header</button>
+    <button
+      type="button"
+      title="Edit footer"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "footer.edit" })}
+    >Edit footer</button>
+    <button
+      type="button"
       class:active={state.headerEnabled}
       aria-pressed={state.headerEnabled}
       title="Header"
