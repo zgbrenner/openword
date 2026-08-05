@@ -134,6 +134,16 @@ function applyPageStyleCommand(command) {
   emitPageStyle();
 }
 
+function editPageRegion(kind) {
+  const { pageStyle } = currentPageStyle();
+  const enabledProperty = kind === "header" ? "HeaderIsOn" : "FooterIsOn";
+  if (!Boolean(pageStyle.getPropertyValue(enabledProperty))) {
+    pageStyle.setPropertyValue(enabledProperty, true);
+  }
+  emitPageStyle();
+  dispatch(commandUrls[kind === "header" ? "header.edit" : "footer.edit"]);
+}
+
 function emitFormatting() {
   postEvent("selection.formatting", { ...formatting });
   emitPageStyle();
@@ -253,6 +263,14 @@ function writeDocument(path, format, markClean) {
 
 function executeCommand(command) {
   const type = command && command.type;
+  if (type === "header.edit") {
+    editPageRegion("header");
+    return;
+  }
+  if (type === "footer.edit") {
+    editPageRegion("footer");
+    return;
+  }
   const unoUrl = commandUrls[type];
   if (unoUrl) {
     dispatch(unoUrl);
