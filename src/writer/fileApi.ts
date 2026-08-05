@@ -1,6 +1,6 @@
 import { basename } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { exists, readFile, remove, rename, writeFile } from "@tauri-apps/plugin-fs";
+import { exists, readFile, readTextFile, remove, rename, writeFile } from "@tauri-apps/plugin-fs";
 import type { WriterClient } from "./client";
 import {
   capturePackage,
@@ -11,11 +11,18 @@ import {
 import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
+export interface LegacyMigrationInfo {
+  sourcePath: string;
+  sourceName: string;
+  message: string;
+}
+
 export interface WriterOpenResult {
-  path: string;
+  path: string | null;
   name: string;
   format: WriterFormat;
   preservation: PackagePreservationSnapshot;
+  migration?: LegacyMigrationInfo;
 }
 
 export interface WriterSaveResult {
@@ -28,9 +35,10 @@ export interface WriterSaveResult {
 }
 
 const OPEN_FILTERS = [
-  { name: "All supported documents", extensions: ["docx", "odt"] },
+  { name: "All supported documents", extensions: ["docx", "odt", "owdoc"] },
   { name: "Word Document", extensions: ["docx"] },
   { name: "OpenDocument Text", extensions: ["odt"] },
+  { name: "Legacy OpenWord Document", extensions: ["owdoc"] },
 ];
 
 export function formatFromPath(path: string): WriterFormat {
@@ -82,11 +90,43 @@ export async function openWriterDocumentBytes(
   }
 }
 
+async function migrateLegacyOwDoc(
+  path: string,
+  client: WriterClient,
+  host: WriterRuntimeHost,
+): Promise<WriterOpenResult> {
+  const sourceName = await basename(path);
+  const text = await readTextFile(path);
+  const [{ parseOwDoc }, { exportDocx }] = await Promise.all([
+    import("@/editor/document"),
+    import("@/docx/export"),
+  ]);
+  const legacy = parseOwDoc(text);
+  const blob = await exportDocx(legacy.doc, legacy.comments, legacy.suggestionMeta);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const preservation = await openWriterDocumentBytes(bytes, "docx", client, host);
+  const baseName = sourceName.replace(/\.owdoc$/i, "") || "Migrated document";
+
+  return {
+    path: null,
+    name: `${baseName}.docx`,
+    format: "docx",
+    preservation,
+    migration: {
+      sourcePath: path,
+      sourceName,
+      message: "This legacy OpenWord document was converted into Writer and must be saved as DOCX or ODT.",
+    },
+  };
+}
+
 export async function openWriterDocumentAtPath(
   path: string,
   client: WriterClient,
   host: WriterRuntimeHost,
 ): Promise<WriterOpenResult> {
+  if (/\.owdoc$/i.test(path)) return migrateLegacyOwDoc(path, client, host);
+
   const format = formatFromPath(path);
   const bytes = await readFile(path);
   const preservation = await openWriterDocumentBytes(bytes, format, client, host);
