@@ -1,0 +1,138 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { WriterClient } from "@/writer/client";
+  import { WriterRuntimeHost } from "@/writer/runtimeHost";
+  import WriterEngineFailure from "./WriterEngineFailure.svelte";
+
+  export let onready: (client: WriterClient, host: WriterRuntimeHost) => void;
+  export let onfailure: (error: Error) => void = () => {};
+
+  let canvas: HTMLCanvasElement;
+  let host: WriterRuntimeHost | null = null;
+  let client: WriterClient | null = null;
+  let loading = true;
+  let failure: Error | null = null;
+  let generation = 0;
+
+  async function initialize() {
+    const currentGeneration = ++generation;
+    loading = true;
+    failure = null;
+    client?.destroy();
+    host?.destroy();
+    client = null;
+    host = new WriterRuntimeHost();
+
+    try {
+      const transport = await host.start(canvas);
+      if (currentGeneration !== generation) return;
+      client = new WriterClient(transport);
+      await client.ping();
+      if (currentGeneration !== generation) return;
+      loading = false;
+      onready(client, host);
+      requestAnimationFrame(() => canvas.focus());
+    } catch (error) {
+      if (currentGeneration !== generation) return;
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      loading = false;
+      failure = normalized;
+      onfailure(normalized);
+    }
+  }
+
+  onMount(() => {
+    void initialize();
+    const resizeObserver = new ResizeObserver(() => window.dispatchEvent(new Event("resize")));
+    if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
+
+    return () => {
+      generation += 1;
+      resizeObserver.disconnect();
+      client?.destroy();
+      host?.destroy();
+    };
+  });
+</script>
+
+<div class="ow-writer-stage" on:selectstart={(event) => event.preventDefault()}>
+  {#if loading}
+    <div class="ow-writer-loading" role="status" aria-live="polite">
+      <span class="ow-writer-spinner" aria-hidden="true"></span>
+      <span>Starting Writer…</span>
+    </div>
+  {:else if failure}
+    <WriterEngineFailure message={failure.message} onretry={() => void initialize()} />
+  {/if}
+
+  <canvas
+    bind:this={canvas}
+    id="qtcanvas"
+    contenteditable="true"
+    class:visible={!loading && !failure}
+    class="ow-writer-canvas"
+    aria-label="Document editor"
+    on:contextmenu={(event) => event.preventDefault()}
+    on:wheel={(event) => event.preventDefault()}
+  ></canvas>
+</div>
+
+<style>
+  .ow-writer-stage {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--ow-bg);
+  }
+
+  .ow-writer-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    outline: 0;
+    visibility: hidden;
+  }
+
+  .ow-writer-canvas.visible {
+    visibility: visible;
+  }
+
+  .ow-writer-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--ow-text-muted);
+    background: var(--ow-bg);
+  }
+
+  .ow-writer-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--ow-chrome-border);
+    border-top-color: var(--ow-accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  :global(.ow-writer-failure) {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ow-writer-spinner { animation: none; }
+  }
+</style>

@@ -1,0 +1,51 @@
+import type { WriterError, WriterEvent, WriterFormat } from "./protocol";
+
+export class WriterState {
+  ready = $state(false);
+  dirty = $state(false);
+  failure = $state<WriterError | null>(null);
+  engineVersion = $state<string | null>(null);
+  bold = $state(false);
+  italic = $state(false);
+  underline = $state(false);
+  fileName = $state("Document1.docx");
+  filePath = $state<string | null>(null);
+  format = $state<WriterFormat>("docx");
+
+  apply(event: WriterEvent): void {
+    switch (event.event) {
+      case "engine.ready":
+        this.ready = true;
+        this.failure = null;
+        this.engineVersion = event.payload.version;
+        break;
+      case "document.changed":
+        this.dirty = event.payload.dirty;
+        break;
+      case "selection.formatting":
+        this.bold = event.payload.bold;
+        this.italic = event.payload.italic;
+        this.underline = event.payload.underline;
+        break;
+      case "engine.failure":
+        this.ready = false;
+        this.failure = event.payload;
+        break;
+    }
+  }
+
+  setDocument(path: string | null, fileName: string, format: WriterFormat): void {
+    this.filePath = path;
+    this.fileName = fileName;
+    this.format = format;
+    this.dirty = false;
+  }
+
+  setStartupFailure(error: unknown): void {
+    this.ready = false;
+    this.failure = {
+      code: "ENGINE_UNAVAILABLE",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
