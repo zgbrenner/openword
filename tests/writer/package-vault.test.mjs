@@ -71,6 +71,19 @@ test("never restores invalid signatures or executable payloads", () => {
   assert.deepEqual(plain(merged.report.blockedExecutables), ["Scripts/python/run.py"]);
 });
 
+test("filters unsafe parts even when Writer output contains them", () => {
+  const vault = loadVault();
+  const snapshot = vault.capture("docx", [entry("word/document.xml", 1)]);
+  const merged = vault.merge(snapshot, [
+    entry("word/document.xml", 9),
+    entry("_xmlsignatures/sig1.xml", 2),
+    entry("word/vbaProject.bin", 3),
+  ]);
+  assert.deepEqual(plain(merged.entries.map((item) => item.path)), ["word/document.xml"]);
+  assert.deepEqual(plain(merged.report.droppedSignatures), ["_xmlsignatures/sig1.xml"]);
+  assert.deepEqual(plain(merged.report.blockedExecutables), ["word/vbaProject.bin"]);
+});
+
 test("resolves relationship targets relative to their owning package part", () => {
   const vault = loadVault();
   assert.equal(
