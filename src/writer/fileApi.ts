@@ -31,8 +31,15 @@ export function formatFromPath(path: string): WriterFormat {
   throw new Error(`Unsupported Writer document format: ${path}`);
 }
 
-function virtualPath(name: "source" | "staged", format: WriterFormat): string {
-  return `/tmp/openword/${name}.${format}`;
+function operationToken(): string {
+  const raw = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return raw.replace(/[^a-zA-Z0-9-]/g, "");
+}
+
+function virtualPath(purpose: string, format: WriterFormat): string {
+  return `/tmp/openword/${purpose}-${operationToken()}.${format}`;
 }
 
 function virtualUrl(path: string): string {
@@ -49,22 +56,28 @@ export async function openWriterDocumentDialog(
   return openWriterDocumentAtPath(path, client, host);
 }
 
-export async function openWriterDocumentAtPath(
-  path: string,
+export async function openWriterDocumentBytes(
+  bytes: Uint8Array,
+  format: WriterFormat,
   client: WriterClient,
   host: WriterRuntimeHost,
-): Promise<WriterOpenResult> {
-  const format = formatFromPath(path);
-  const bytes = await readFile(path);
+): Promise<void> {
   const sourcePath = virtualPath("source", format);
-
   host.writeVirtualFile(sourcePath, bytes);
   try {
     await client.openPath(virtualUrl(sourcePath));
   } finally {
     host.removeVirtualFile(sourcePath);
   }
+}
 
+export async function openWriterDocumentAtPath(
+  path: string,
+  client: WriterClient,
+  host: WriterRuntimeHost,
+): Promise<WriterOpenResult> {
+  const format = formatFromPath(path);
+  await openWriterDocumentBytes(await readFile(path), format, client, host);
   return { path, name: await basename(path), format };
 }
 
@@ -90,7 +103,7 @@ export async function saveWriterDocument(
   client: WriterClient,
   host: WriterRuntimeHost,
 ): Promise<WriterSaveResult> {
-  const stagedVirtualPath = virtualPath("staged", format);
+  const stagedVirtualPath = virtualPath("export", format);
   await client.savePath(virtualUrl(stagedVirtualPath), format);
 
   let bytes: Uint8Array;
@@ -106,18 +119,16 @@ export async function saveWriterDocument(
 
 /**
  * Writes the complete new document beside the target before touching the
- * original. The backup is removed only after the staged file is in place.
- * A failed replacement restores the original when possible and deliberately
- * retains the staged file so the user's new bytes are recoverable.
+ * original. A failed replacement restores the original when possible and
+ * deliberately retains the staged file so the new bytes remain recoverable.
  */
 async function replaceWithStagedFile(targetPath: string, bytes: Uint8Array): Promise<string | null> {
-  const stagedPath = `${targetPath}.openword-tmp`;
-  const backupPath = `${targetPath}.openword-backup`;
+  const token = operationToken();
+  const stagedPath = `${targetPath}.openword-tmp-${token}`;
+  const backupPath = `${targetPath}.openword-backup-${token}`;
   const hadOriginal = await exists(targetPath);
 
-  if (await exists(backupPath)) await remove(backupPath);
   await writeFile(stagedPath, bytes);
-
   if (hadOriginal) await rename(targetPath, backupPath);
 
   try {
@@ -130,6 +141,14 @@ async function replaceWithStagedFile(targetPath: string, bytes: Uint8Array): Pro
     throw new Error(`Could not replace ${targetPath}. New document bytes remain at ${stagedPath}. ${detail}`);
   }
 
-  if (hadOriginal && (await exists(backupPath))) await remove(backupPath);
+  if (hadOriginal && (await exists(backupPath))) {
+    try {
+      await remove(backupPath);
+    } catch {
+      // The target is saved correctly. Retain the old file and report its
+      // location instead of turning successful persistence into an error.
+      return backupPath;
+    }
+  }
   return null;
 }
