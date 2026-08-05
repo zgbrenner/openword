@@ -11,6 +11,11 @@ export class WriterState {
   alignment = $state<ParagraphAlignment>("left");
   bullets = $state(false);
   numbering = $state(false);
+  pageStyleName = $state("Default Page Style");
+  headerEnabled = $state(false);
+  footerEnabled = $state(false);
+  differentFirstPage = $state(false);
+  differentOddEven = $state(false);
   fileName = $state("Document1.docx");
   filePath = $state<string | null>(null);
   format = $state<WriterFormat>("docx");
@@ -34,6 +39,13 @@ export class WriterState {
         this.alignment = event.payload.alignment;
         this.bullets = event.payload.bullets;
         this.numbering = event.payload.numbering;
+        break;
+      case "selection.pageStyle":
+        this.pageStyleName = event.payload.pageStyleName;
+        this.headerEnabled = event.payload.headerEnabled;
+        this.footerEnabled = event.payload.footerEnabled;
+        this.differentFirstPage = event.payload.differentFirstPage;
+        this.differentOddEven = event.payload.differentOddEven;
         break;
       case "engine.failure":
         this.ready = false;
