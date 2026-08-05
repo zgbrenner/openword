@@ -14,6 +14,8 @@ export type WriterCommand =
   | { type: "list.toggleBullets" }
   | { type: "list.toggleNumbering" }
   | { type: "insert.pageBreak" }
+  | { type: "header.edit" }
+  | { type: "footer.edit" }
   | { type: "header.setEnabled"; enabled: boolean }
   | { type: "footer.setEnabled"; enabled: boolean }
   | { type: "pageStyle.setDifferentFirstPage"; enabled: boolean }
