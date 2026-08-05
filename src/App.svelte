@@ -16,6 +16,10 @@
     type WriterOpenResult,
     type WriterSaveResult,
   } from "@/writer/fileApi";
+  import type {
+    PackageCompatibilityReport,
+    PackagePreservationSnapshot,
+  } from "@/writer/packagePassthrough";
   import {
     clearRecoverySnapshot,
     readRecoverySnapshot,
@@ -28,6 +32,8 @@
   const writerState = new WriterState();
   let client = $state<WriterClient | null>(null);
   let runtimeHost = $state<WriterRuntimeHost | null>(null);
+  let packagePreservation = null as PackagePreservationSnapshot | null;
+  let compatibilityReport = $state<PackageCompatibilityReport | null>(null);
   let unsubscribeWriter: (() => void) | null = null;
   let pendingOpenPath: string | null = null;
   let documentInitialized = false;
@@ -50,6 +56,8 @@
   }
 
   function applyOpenResult(result: WriterOpenResult): void {
+    packagePreservation = result.preservation;
+    compatibilityReport = null;
     writerState.setDocument(result.path, result.name, result.format);
   }
 
@@ -91,6 +99,8 @@
     if (!writer || !(await confirmDiscard("start a new document"))) return;
     try {
       await writer.client.newDocument("docx");
+      packagePreservation = null;
+      compatibilityReport = null;
       writerState.setDocument(null, "Document1.docx", "docx");
       await clearRecoveryAfterDiscard();
     } catch (error) {
@@ -105,16 +115,45 @@
     else console.warn(detail);
   }
 
+  async function reportCompatibility(result: WriterSaveResult): Promise<void> {
+    packagePreservation = result.preservation;
+    compatibilityReport = result.compatibilityReport;
+    const report = result.compatibilityReport;
+    const lines: string[] = [];
+    if (report.droppedSignatures.length) {
+      lines.push(`${report.droppedSignatures.length} invalidated digital signature part(s) were removed.`);
+    }
+    if (report.blockedExecutables.length) {
+      lines.push(`${report.blockedExecutables.length} executable or macro payload(s) were quarantined.`);
+    }
+    if (report.notCarriedAcrossFormat.length) {
+      lines.push(`${report.notCarriedAcrossFormat.length} opaque part(s) could not be carried across formats.`);
+    }
+    lines.push(...report.warnings);
+    if (!lines.length) return;
+
+    const detail = lines.join("\n");
+    if (isTauri()) await message(detail, { title: "Document compatibility", kind: "warning" });
+    else console.warn(detail);
+  }
+
   async function doSave(): Promise<void> {
     const writer = requireWriter();
     if (!writer) return;
     if (!writerState.filePath) return doSaveAs();
 
     try {
-      const result = await saveWriterDocument(writerState.filePath, writerState.format, writer.client, writer.host);
+      const result = await saveWriterDocument(
+        writerState.filePath,
+        writerState.format,
+        writer.client,
+        writer.host,
+        packagePreservation,
+      );
       writerState.dirty = false;
       await clearRecoveryAfterDiscard();
       await reportRetainedBackup(result);
+      await reportCompatibility(result);
     } catch (error) {
       await showError("Could not save document", error);
     }
@@ -126,7 +165,12 @@
     const baseName = writerState.fileName.replace(/\.[^.]+$/, "") || "Document1";
 
     try {
-      const result = await saveWriterDocumentAsDialog(writer.client, writer.host, baseName);
+      const result = await saveWriterDocumentAsDialog(
+        writer.client,
+        writer.host,
+        baseName,
+        packagePreservation,
+      );
       if (!result) return;
       writerState.setDocument(
         result.path,
@@ -135,6 +179,7 @@
       );
       await clearRecoveryAfterDiscard();
       await reportRetainedBackup(result);
+      await reportCompatibility(result);
     } catch (error) {
       await showError("Could not save document", error);
     }
@@ -149,6 +194,7 @@
         fileName: writerState.fileName,
         originalPath: writerState.filePath,
         format: writerState.format,
+        preservation: packagePreservation,
       });
     } catch (error) {
       console.error("Could not write OpenWord recovery snapshot", error);
@@ -174,7 +220,13 @@
       return false;
     }
 
-    await openWriterDocumentBytes(snapshot.bytes, snapshot.metadata.format, nextClient, nextHost);
+    packagePreservation = await openWriterDocumentBytes(
+      snapshot.bytes,
+      snapshot.metadata.format,
+      nextClient,
+      nextHost,
+    );
+    compatibilityReport = null;
     writerState.setDocument(
       snapshot.metadata.originalPath,
       snapshot.metadata.fileName,
@@ -254,6 +306,8 @@
         const restored = await restoreRecoveryIfAvailable(nextClient, nextHost);
         if (!restored) {
           await nextClient.newDocument("docx");
+          packagePreservation = null;
+          compatibilityReport = null;
           writerState.setDocument(null, "Document1.docx", "docx");
         }
       }
