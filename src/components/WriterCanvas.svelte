@@ -62,18 +62,20 @@
       <span>Starting Writer…</span>
     </div>
   {:else if failure}
-    <WriterEngineFailure message={failure.message} onretry={() => void initialize()} />
+    <div class="ow-writer-failure-wrap">
+      <WriterEngineFailure message={failure.message} onretry={() => void initialize()} />
+    </div>
   {/if}
 
   <canvas
     bind:this={canvas}
     id="qtcanvas"
     contenteditable="true"
-    class:visible={!loading && !failure}
     class="ow-writer-canvas"
+    class:visible={!loading && !failure}
     aria-label="Document editor"
     on:contextmenu={(event) => event.preventDefault()}
-    on:wheel={(event) => event.preventDefault()}
+    on:wheel|nonpassive={(event) => event.preventDefault()}
   ></canvas>
 </div>
 
@@ -101,16 +103,20 @@
     visibility: visible;
   }
 
-  .ow-writer-loading {
+  .ow-writer-loading,
+  .ow-writer-failure-wrap {
     position: absolute;
     inset: 0;
     z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;
+    background: var(--ow-bg);
+  }
+
+  .ow-writer-loading {
     gap: 10px;
     color: var(--ow-text-muted);
-    background: var(--ow-bg);
   }
 
   .ow-writer-spinner {
@@ -120,12 +126,6 @@
     border-top-color: var(--ow-accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-  }
-
-  :global(.ow-writer-failure) {
-    position: absolute;
-    inset: 0;
-    z-index: 3;
   }
 
   @keyframes spin {
