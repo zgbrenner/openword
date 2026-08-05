@@ -15,6 +15,14 @@ test("package adapter captures and merges DOCX/ODT archives through the tested v
   assert.match(adapter, /mergeOdtManifest/);
 });
 
+test("removes metadata references to signatures and executable package parts", () => {
+  const adapter = read("src/writer/packagePassthrough.ts");
+  assert.match(adapter, /scrubDocxContentTypes/);
+  assert.match(adapter, /scrubDocxRelationships/);
+  assert.match(adapter, /scrubOdtManifest/);
+  assert.match(adapter, /blockedPaths/);
+});
+
 test("file open returns a preservation snapshot and same-format saves merge it before disk replacement", () => {
   const fileApi = read("src/writer/fileApi.ts");
   assert.match(fileApi, /preservation:\s*PackagePreservationSnapshot/);
