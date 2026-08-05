@@ -8,8 +8,8 @@ const read = (path) => readFileSync(new URL(path, root), "utf8");
 test("package adapter captures and merges DOCX/ODT archives through the tested vault", () => {
   const adapter = read("src/writer/packagePassthrough.ts");
   assert.match(adapter, /import JSZip from "jszip"/);
-  assert.match(adapter, /OPENWORD_PACKAGE_VAULT\.capture/);
-  assert.match(adapter, /OPENWORD_PACKAGE_VAULT\.merge/);
+  assert.match(adapter, /vault\(\)\.capture/);
+  assert.match(adapter, /vault\(\)\.merge/);
   assert.match(adapter, /mergeDocxContentTypes/);
   assert.match(adapter, /mergeDocxRelationships/);
   assert.match(adapter, /mergeOdtManifest/);
