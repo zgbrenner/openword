@@ -113,6 +113,49 @@
       on:click={() => execute({ type: "insert.pageBreak" })}
     >Page break</button>
   </div>
+
+  <span class="ow-writer-separator" aria-hidden="true"></span>
+
+  <div class="ow-writer-group" aria-label="Header and footer">
+    <button
+      type="button"
+      class:active={state.headerEnabled}
+      aria-pressed={state.headerEnabled}
+      title="Header"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "header.setEnabled", enabled: !state.headerEnabled })}
+    >Header</button>
+    <button
+      type="button"
+      class:active={state.footerEnabled}
+      aria-pressed={state.footerEnabled}
+      title="Footer"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "footer.setEnabled", enabled: !state.footerEnabled })}
+    >Footer</button>
+    <button
+      type="button"
+      class:active={state.differentFirstPage}
+      aria-pressed={state.differentFirstPage}
+      title="Different first page"
+      disabled={!client || !state.ready}
+      on:click={() => execute({
+        type: "pageStyle.setDifferentFirstPage",
+        enabled: !state.differentFirstPage,
+      })}
+    >Different first</button>
+    <button
+      type="button"
+      class:active={state.differentOddEven}
+      aria-pressed={state.differentOddEven}
+      title="Different odd and even pages"
+      disabled={!client || !state.ready}
+      on:click={() => execute({
+        type: "pageStyle.setDifferentOddEven",
+        enabled: !state.differentOddEven,
+      })}
+    >Odd & even</button>
+  </div>
 </nav>
 
 <style>
