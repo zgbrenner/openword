@@ -12,6 +12,7 @@ export type WriterRequestMethod =
   | "document.new"
   | "document.open"
   | "document.save"
+  | "document.snapshot"
   | "command.execute";
 
 export interface WriterRequest {
