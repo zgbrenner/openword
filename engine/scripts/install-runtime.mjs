@@ -12,7 +12,11 @@ const destination = resolve(root, "public/writer-runtime");
 const manifest = JSON.parse(readFileSync(resolve(root, "engine/manifest.json"), "utf8"));
 const lock = JSON.parse(readFileSync(resolve(root, "engine/runtime.lock.json"), "utf8"));
 const generatedFiles = ["soffice.js", "soffice.wasm", "soffice.data", "soffice.data.js.metadata"];
-const committedBridgeFiles = ["openword_writer_commands.js", "openword_writer_thread.js"];
+const committedBridgeFiles = [
+  "openword_writer_commands.js",
+  "openword_writer_page_styles.js",
+  "openword_writer_thread.js",
+];
 
 mkdirSync(destination, { recursive: true });
 for (const name of generatedFiles) {
