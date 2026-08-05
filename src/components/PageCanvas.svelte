@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, onDestroy, getContext } from "svelte";
-  import { geometryFor, computeBreaks, type PageBreak } from "@/editor/pagination";
+  import { onMount, getContext } from "svelte";
+  import { geometryFor } from "@/editor/pagination";
   import type { EditorController } from "@/lib/editorController.svelte";
   import type { ViewState } from "@/lib/viewState.svelte";
   import type { PaginationState } from "@/lib/paginationState.svelte";
@@ -10,53 +10,46 @@
   const pagination = getContext<PaginationState>("pagination");
 
   let mountEl: HTMLDivElement;
-  let resizeObserver: ResizeObserver;
-  let pageBreaks = $state<PageBreak[]>([]);
 
   const geometry = $derived(geometryFor(view.pageSize));
-
-  function recomputeBreaks() {
-    if (!mountEl) return;
-    const totalHeight = mountEl.scrollHeight;
-    const inner = Math.max(0, totalHeight - geometry.marginPx * 2);
-    const { breaks, pageCount: count } = computeBreaks(inner, geometry);
-    pageBreaks = breaks.map((b) => ({ ...b, offsetPx: b.offsetPx + geometry.marginPx }));
-    pagination.pageCount = count;
-  }
+  // Real gray gap between two separate page sheets: bottom margin of page N
+  // + top margin of page N+1 (see paginationPlugin.ts's measure(), which
+  // reflows content using this exact same constant so the ProseMirror
+  // content's decorated gaps line up with the sheet gaps drawn here).
+  const gapHeight = $derived(2 * geometry.marginPx);
+  // Vertical distance from one page sheet's top-left to the next's.
+  const pageAdvance = $derived(geometry.pageHeightPx + gapHeight);
+  const pageIndices = $derived(Array.from({ length: pagination.pageCount }, (_, i) => i));
+  const stackHeight = $derived(pagination.pageCount * pageAdvance - gapHeight);
 
   onMount(() => {
     controller.attach(mountEl);
-    recomputeBreaks();
-    resizeObserver = new ResizeObserver(() => recomputeBreaks());
-    resizeObserver.observe(mountEl);
   });
 
-  onDestroy(() => {
-    resizeObserver?.disconnect();
-  });
-
+  // Page size and zoom are plain Svelte state, not ProseMirror transactions
+  // — the pagination plugin can't see them change on its own, so push
+  // updates in explicitly. Re-runs whenever `geometry` (derived from
+  // view.pageSize) or view.zoom changes.
   $effect(() => {
-    // Re-run when page size changes.
-    void geometry;
-    recomputeBreaks();
+    controller.setPaginationGeometry(geometry, view.zoom);
   });
 </script>
 
 <div class="ow-page-scroll">
   <div class="ow-page-stack" style={`transform: scale(${view.zoom}); width:${geometry.pageWidthPx}px`}>
-    <div class="ow-page-wrapper" style={`width:${geometry.pageWidthPx}px`}>
+    <div class="ow-page-wrapper" style={`width:${geometry.pageWidthPx}px; min-height:${stackHeight}px`}>
+      {#each pageIndices as n (n)}
+        <div
+          class="ow-page-sheet"
+          aria-hidden="true"
+          style={`top:${n * pageAdvance}px; width:${geometry.pageWidthPx}px; height:${geometry.pageHeightPx}px`}
+        ></div>
+      {/each}
       <div
         bind:this={mountEl}
         class="ow-page-content"
-        style={`width:${geometry.pageWidthPx}px; min-height:${geometry.pageHeightPx}px; padding:${geometry.marginPx}px`}
+        style={`width:${geometry.pageWidthPx}px; padding:${geometry.marginPx}px`}
       ></div>
-      <div class="ow-page-breaks" aria-hidden="true">
-        {#each pageBreaks as brk (brk.pageNumber)}
-          <div class="ow-page-break-marker" style={`top:${brk.offsetPx}px`}>
-            <span class="ow-page-break-label">Page {brk.pageNumber}</span>
-          </div>
-        {/each}
-      </div>
     </div>
     <div class="ow-page-footer">{pagination.pageCount} page{pagination.pageCount === 1 ? "" : "s"}</div>
   </div>
@@ -82,10 +75,25 @@
     flex: none;
   }
 
-  :global(.ow-page-content.ow-prosemirror),
-  .ow-page-content {
+  /* v2 pagination: separate white "sheet" rectangles, one per page, with a
+     real gray gap (var(--ow-bg) shows through) between them — see
+     paginationPlugin.ts for the content-side reflow that keeps text out of
+     these gaps. Purely decorative background, behind the actual editable
+     content below. */
+  .ow-page-sheet {
+    position: absolute;
+    left: 0;
     background: var(--ow-page-bg);
     box-shadow: var(--ow-page-shadow);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  :global(.ow-page-content.ow-prosemirror),
+  .ow-page-content {
+    position: relative;
+    z-index: 1;
+    background: transparent;
     color: #14161c;
     font-family: var(--ow-font-doc);
     font-size: 12pt;
@@ -150,38 +158,28 @@
     padding-left: 26px;
   }
 
-  .ow-page-breaks {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
+  /* Comment anchors and track-changes marks — baseline styling; the
+     dedicated review UI (margin cards, per-change accept/reject) layers
+     interaction on top of this, not visual replacement. */
+  :global(.ow-prosemirror .ow-comment-anchor) {
+    background: rgba(255, 212, 60, 0.35);
+    border-bottom: 2px solid rgba(214, 158, 0, 0.7);
   }
-
-  .ow-page-break-marker {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 26px;
-    margin-top: -13px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  :global(.ow-prosemirror .ow-comment-anchor.ow-comment-resolved) {
+    background: transparent;
+    border-bottom-color: rgba(154, 160, 172, 0.5);
   }
-  .ow-page-break-marker::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    border-top: 2px dashed rgba(120, 128, 145, 0.45);
+  :global(.ow-prosemirror ins[data-id]) {
+    color: #1a7f37;
+    background: rgba(26, 127, 55, 0.08);
+    text-decoration: underline;
+    text-decoration-color: #1a7f37;
   }
-  .ow-page-break-label {
-    position: relative;
-    background: var(--ow-bg);
-    color: var(--ow-text-muted);
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--ow-chrome-border);
+  :global(.ow-prosemirror del[data-id]) {
+    color: #c0392b;
+    background: rgba(192, 57, 43, 0.08);
+    text-decoration: line-through;
+    text-decoration-color: #c0392b;
   }
 
   .ow-page-footer {

@@ -2,12 +2,13 @@ import { open, save, message } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile, writeTextFile, readTextFile, rename, mkdir, exists, remove } from "@tauri-apps/plugin-fs";
 import { appDataDir, basename } from "@tauri-apps/api/path";
 import type { Node as PMNode } from "prosemirror-model";
-import { docFromJSON, docToJSON, emptyDoc } from "@/editor/document";
+import { emptyDoc, serializeOwDoc, parseOwDoc, type LoadedDocument } from "@/editor/document";
+import type { CommentThread } from "@/editor/comments";
+import type { SuggestionMetaStore } from "@/editor/trackChanges";
 
 export type FileFormat = "owdoc" | "docx";
 
-export interface OpenResult {
-  doc: PMNode;
+export interface OpenResult extends LoadedDocument {
   path: string;
   format: FileFormat;
   name: string;
@@ -40,15 +41,20 @@ export async function openDocumentAtPath(path: string): Promise<OpenResult> {
   if (format === "docx") {
     const bytes = await readFile(path);
     const { importDocx } = await import("@/docx/import");
-    const doc = await importDocx(bytes);
-    return { doc, path, format, name };
+    const { doc, comments, suggestionMeta } = await importDocx(bytes);
+    return { doc, comments, suggestionMeta, path, format, name };
   }
   const text = await readTextFile(path);
-  const doc = docFromJSON(JSON.parse(text));
-  return { doc, path, format, name };
+  const { doc, comments, suggestionMeta } = parseOwDoc(text);
+  return { doc, comments, suggestionMeta, path, format, name };
 }
 
-export async function saveDocumentAsDialog(doc: PMNode, suggestedName = "Untitled"): Promise<{ path: string; format: FileFormat } | null> {
+export async function saveDocumentAsDialog(
+  doc: PMNode,
+  comments: CommentThread[],
+  suggestionMeta: SuggestionMetaStore,
+  suggestedName = "Untitled",
+): Promise<{ path: string; format: FileFormat } | null> {
   const path = await save({
     defaultPath: `${suggestedName}.owdoc`,
     filters: [
@@ -58,20 +64,25 @@ export async function saveDocumentAsDialog(doc: PMNode, suggestedName = "Untitle
   });
   if (!path) return null;
   const format = formatFromPath(path);
-  await writeDocument(doc, path, format);
+  await writeDocument(doc, comments, suggestionMeta, path, format);
   return { path, format };
 }
 
-export async function writeDocument(doc: PMNode, path: string, format: FileFormat): Promise<void> {
+export async function writeDocument(
+  doc: PMNode,
+  comments: CommentThread[],
+  suggestionMeta: SuggestionMetaStore,
+  path: string,
+  format: FileFormat,
+): Promise<void> {
   if (format === "docx") {
     const { exportDocx } = await import("@/docx/export");
-    const blob = await exportDocx(doc);
+    const blob = await exportDocx(doc, comments, suggestionMeta);
     const buf = new Uint8Array(await blob.arrayBuffer());
     await writeFile(path, buf);
     return;
   }
-  const json = JSON.stringify(docToJSON(doc));
-  await writeTextFile(path, json);
+  await writeTextFile(path, serializeOwDoc(doc, comments, suggestionMeta));
 }
 
 // --- Crash-recovery autosave -------------------------------------------
@@ -88,20 +99,25 @@ async function recoveryDir(): Promise<string> {
   return dir;
 }
 
-export async function writeRecoverySnapshot(doc: PMNode, slot = "current"): Promise<void> {
+export async function writeRecoverySnapshot(
+  doc: PMNode,
+  comments: CommentThread[],
+  suggestionMeta: SuggestionMetaStore,
+  slot = "current",
+): Promise<void> {
   const dir = await recoveryDir();
   const finalPath = `${dir}/${slot}.owdoc`;
   const tmpPath = `${finalPath}.tmp`;
-  await writeTextFile(tmpPath, JSON.stringify(docToJSON(doc)));
+  await writeTextFile(tmpPath, serializeOwDoc(doc, comments, suggestionMeta));
   await rename(tmpPath, finalPath);
 }
 
-export async function readRecoverySnapshot(slot = "current"): Promise<PMNode | null> {
+export async function readRecoverySnapshot(slot = "current"): Promise<LoadedDocument | null> {
   const dir = await recoveryDir();
   const finalPath = `${dir}/${slot}.owdoc`;
   if (!(await exists(finalPath))) return null;
   const text = await readTextFile(finalPath);
-  return docFromJSON(JSON.parse(text));
+  return parseOwDoc(text);
 }
 
 export async function clearRecoverySnapshot(slot = "current"): Promise<void> {

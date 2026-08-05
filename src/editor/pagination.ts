@@ -1,13 +1,15 @@
 // Page geometry and pagination math.
 //
-// v1 scope (see ARCHITECTURE.md "Pagination"): OpenWord renders the document
-// as one continuous, fully-editable column — the safe, always-correct choice
-// for a v1 editing surface — and overlays live page-break indicator lines
-// computed from the actual rendered content height. It does not yet reflow
-// content into physically separate page containers (that's the v2 roadmap
-// item modeled on SuperDoc's custom layout engine). This still gives
-// accurate page count, visible break lines, and the familiar
-// "paper on a gray background" look.
+// geometryFor() is the shared source of truth for page dimensions, used by
+// both PageCanvas.svelte (to draw the page sheets) and
+// src/editor/paginationPlugin.ts (to decide, per top-level block, whether it
+// needs to be pushed onto the next page — see that file for the v2 reflow
+// algorithm; see ARCHITECTURE.md's "Pagination" section for the overall
+// design). computeBreaks() below is the older v1 whole-column break-line
+// calculation kept around as a small, independently testable pure-math
+// helper; it's no longer used for the live page-stack render (the plugin
+// now measures per-block instead of using one continuous scrollHeight), but
+// it's cheap to keep and correct on its own terms.
 
 export const CSS_PX_PER_INCH = 96;
 

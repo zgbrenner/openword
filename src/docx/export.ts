@@ -22,26 +22,109 @@ import {
   PageBreak,
   WidthType,
   BorderStyle,
+  CommentRangeStart,
+  CommentRangeEnd,
+  CommentReference,
+  InsertedTextRun,
+  DeletedTextRun,
   type IParagraphOptions,
   type IRunStylePropertiesOptions,
   type ILevelsOptions,
   type ISpacingProperties,
   type ITableBordersOptions,
   type ParagraphChild,
+  type ICommentOptions,
 } from "docx";
 import type { Node as PMNode, Mark } from "prosemirror-model";
+import { findCommentAnchors, type CommentThread } from "../editor/comments";
+import type { SuggestionMetaStore } from "../editor/trackChanges";
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
-export async function exportDocx(doc: PMNode): Promise<Blob> {
+export async function exportDocx(
+  doc: PMNode,
+  comments: CommentThread[] = [],
+  suggestionMeta: SuggestionMetaStore = {},
+): Promise<Blob> {
   // Per-call mutable state for numbering (ordered lists get their own
   // numbering "reference" so independent lists can each start at their own
   // number and nest correctly). Kept local to avoid any shared module state
   // across concurrent exports.
   const numberingConfigs: { reference: string; levels: readonly ILevelsOptions[] }[] = [];
   let orderedListCounter = 0;
+
+  // ---------------------------------------------------------------------
+  // Comments: assign each thread that actually anchors somewhere in the doc
+  // a sequential OOXML numeric id (w:comment/@w:id, shared with
+  // w:commentRangeStart/End/w:commentReference), and build the comments.xml
+  // entries up front. Replies use the `docx` package's native `parentId`
+  // threading (it auto-generates word/commentsExtended.xml + the w14:paraId
+  // plumbing) rather than us hand-rolling that — real Word itself only ever
+  // anchors ONE commentRangeStart/End/commentReference triple per thread (at
+  // the root comment's id); replies live purely in comments.xml + the
+  // threading part, with no separate anchor of their own. Threads with no
+  // anchor left in the doc (stale data) are dropped — documented v1
+  // simplification, not a silent bug: there is nothing left to point them at.
+  const commentAnchors = findCommentAnchors(doc);
+  const anchorCountByThread = new Map<string, number>();
+  for (const a of commentAnchors) anchorCountByThread.set(a.threadId, (anchorCountByThread.get(a.threadId) ?? 0) + 1);
+  const remainingAnchorsByThread = new Map(anchorCountByThread);
+
+  const commentNumericId = new Map<string, number>();
+  const commentEntries: ICommentOptions[] = [];
+  let nextCommentNumericId = 0;
+  for (const thread of comments) {
+    if (!anchorCountByThread.has(thread.id) || thread.entries.length === 0) continue;
+    const [first, ...replies] = thread.entries;
+    const rootId = nextCommentNumericId++;
+    commentNumericId.set(thread.id, rootId);
+    commentEntries.push({
+      id: rootId,
+      author: first.author || "Unknown",
+      initials: authorInitials(first.author),
+      date: new Date(first.createdAt),
+      resolved: thread.resolved,
+      children: textToParagraphs(first.text),
+    });
+    for (const reply of replies) {
+      commentEntries.push({
+        id: nextCommentNumericId++,
+        author: reply.author || "Unknown",
+        initials: authorInitials(reply.author),
+        date: new Date(reply.createdAt),
+        parentId: rootId,
+        resolved: thread.resolved,
+        children: textToParagraphs(reply.text),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Track changes: insertion/deletion marks only carry a bare suggestion id
+  // (author/date live in `suggestionMeta`, keyed by String(id) — same
+  // lookup convention as src/editor/trackChanges.ts). Map each raw mark id
+  // to a stable OOXML numeric id (w:ins/w:del share Word's id space) so
+  // runs split by formatting boundaries still read as the same edit.
+  const trackNumericId = new Map<string, number>();
+  let nextTrackNumericId = 1;
+  function numericTrackId(rawId: unknown): number {
+    const key = String(rawId);
+    let id = trackNumericId.get(key);
+    if (id === undefined) {
+      id = nextTrackNumericId++;
+      trackNumericId.set(key, id);
+    }
+    return id;
+  }
+  function trackChangeMeta(rawId: unknown): { author: string; date: string } {
+    const meta = suggestionMeta[String(rawId)];
+    return {
+      author: meta?.author || "Unknown",
+      date: (meta && Number.isFinite(meta.date) ? new Date(meta.date) : new Date()).toISOString(),
+    };
+  }
 
   function convertOrderedList(node: PMNode, depth: number): (Paragraph | Table)[] {
     orderedListCounter += 1;
@@ -179,10 +262,55 @@ export async function exportDocx(doc: PMNode): Promise<Blob> {
     });
   }
 
+  type RunLike = TextRun | ImageRun | InsertedTextRun | DeletedTextRun;
+
+  function buildRun(child: PMNode): RunLike | null {
+    const deletionMark = child.marks.find((m) => m.type.name === "deletion");
+    const insertionMark = child.marks.find((m) => m.type.name === "insertion");
+    // insertion/deletion/modification mutually exclude each other on the PM
+    // side (see the suggest-changes library's schema), so at most one of
+    // these applies. `modification` (formatting-change suggestions) has no
+    // OOXML rendering here — see the note above `runPropsFromMarks` — so a
+    // modified run just falls through to the plain-run branch below,
+    // exported with its current (post-change) formatting.
+    if (child.isText) {
+      const text = child.text ?? "";
+      const runProps = runPropsFromMarks(child.marks);
+      if (deletionMark) {
+        const meta = trackChangeMeta(deletionMark.attrs.id);
+        return new DeletedTextRun({ ...runProps, text, id: numericTrackId(deletionMark.attrs.id), ...meta });
+      }
+      if (insertionMark) {
+        const meta = trackChangeMeta(insertionMark.attrs.id);
+        return new InsertedTextRun({ ...runProps, text, id: numericTrackId(insertionMark.attrs.id), ...meta });
+      }
+      return new TextRun({ text, ...runProps });
+    }
+    if (child.type.name === "image") {
+      // Tracked-change wrapping of images isn't supported by the `docx`
+      // package (InsertedTextRun/DeletedTextRun always wrap a TextRun) —
+      // documented simplification: an inserted/deleted image round-trips
+      // as a plain image, losing only the suggestion annotation.
+      return imageNodeToRun(child);
+    }
+    if (child.type.name === "hard_break") {
+      if (deletionMark) {
+        const meta = trackChangeMeta(deletionMark.attrs.id);
+        return new DeletedTextRun({ break: 1, id: numericTrackId(deletionMark.attrs.id), ...meta });
+      }
+      if (insertionMark) {
+        const meta = trackChangeMeta(insertionMark.attrs.id);
+        return new InsertedTextRun({ break: 1, id: numericTrackId(insertionMark.attrs.id), ...meta });
+      }
+      return new TextRun({ break: 1 });
+    }
+    return null;
+  }
+
   function inlineChildrenToDocx(node: PMNode): ParagraphChild[] {
     const out: ParagraphChild[] = [];
     let pendingHref: string | null = null;
-    let pendingRuns: (TextRun | ImageRun)[] = [];
+    let pendingRuns: RunLike[] = [];
 
     const flushLink = () => {
       if (pendingRuns.length === 0) return;
@@ -195,18 +323,55 @@ export async function exportDocx(doc: PMNode): Promise<Blob> {
       pendingRuns = [];
     };
 
+    // Comment ranges sit at the paragraph level (siblings of runs/hyperlinks
+    // in w:p), never nested inside a hyperlink, matching how Word itself
+    // places them. `openOrder`/`openSet` track what's currently open within
+    // this paragraph (marks never cross block boundaries, so every range
+    // opened here is guaranteed to close before the paragraph ends);
+    // `remainingAnchorsByThread`/`nextCommentNumericId`'s ledger is shared
+    // module state so we know, document-wide, which occurrence is the last
+    // one — that's where the single w:commentReference belongs.
+    const openOrder: string[] = [];
+    const openSet = new Set<string>();
+    const openIsLast = new Map<string, boolean>();
+
+    const openCommentRange = (threadId: string) => {
+      const numId = commentNumericId.get(threadId);
+      if (numId === undefined) return; // mark references a thread with no comments.xml entry: skip gracefully
+      openOrder.push(threadId);
+      openSet.add(threadId);
+      const remaining = (remainingAnchorsByThread.get(threadId) ?? 1) - 1;
+      remainingAnchorsByThread.set(threadId, remaining);
+      openIsLast.set(threadId, remaining <= 0);
+      out.push(new CommentRangeStart(numId));
+    };
+    const closeCommentRange = (threadId: string) => {
+      const idx = openOrder.indexOf(threadId);
+      if (idx !== -1) openOrder.splice(idx, 1);
+      openSet.delete(threadId);
+      const numId = commentNumericId.get(threadId);
+      if (numId === undefined) return;
+      out.push(new CommentRangeEnd(numId));
+      if (openIsLast.get(threadId)) out.push(new TextRun({ children: [new CommentReference(numId)] }));
+      openIsLast.delete(threadId);
+    };
+
     node.forEach((child) => {
+      const commentIds = new Set<string>();
+      for (const m of child.marks) if (m.type.name === "comment") commentIds.add(String(m.attrs.id));
+
+      const toClose = openOrder.filter((id) => !commentIds.has(id));
+      const toOpen = [...commentIds].filter((id) => !openSet.has(id));
+      if (toClose.length > 0 || toOpen.length > 0) {
+        flushLink();
+        for (let i = toClose.length - 1; i >= 0; i--) closeCommentRange(toClose[i]);
+        for (const id of toOpen) openCommentRange(id);
+      }
+
       const linkMark = child.marks.find((m) => m.type.name === "link");
       const href = linkMark && typeof linkMark.attrs.href === "string" ? linkMark.attrs.href : null;
 
-      let run: TextRun | ImageRun | null = null;
-      if (child.isText) {
-        run = new TextRun({ text: child.text ?? "", ...runPropsFromMarks(child.marks) });
-      } else if (child.type.name === "image") {
-        run = imageNodeToRun(child);
-      } else if (child.type.name === "hard_break") {
-        run = new TextRun({ break: 1 });
-      }
+      const run = buildRun(child);
       if (!run) return;
 
       if (href) {
@@ -219,6 +384,9 @@ export async function exportDocx(doc: PMNode): Promise<Blob> {
       }
     });
     flushLink();
+    // Force-close anything still open at paragraph end (comment marks never
+    // cross block boundaries — see findCommentAnchors's docstring).
+    for (let i = openOrder.length - 1; i >= 0; i--) closeCommentRange(openOrder[i]);
     return out;
   }
 
@@ -229,13 +397,49 @@ export async function exportDocx(doc: PMNode): Promise<Blob> {
   const file = new Document({
     sections: [{ children }],
     ...(numberingConfigs.length > 0 ? { numbering: { config: numberingConfigs } } : {}),
+    ...(commentEntries.length > 0 ? { comments: { children: commentEntries } } : {}),
+    ...(trackNumericId.size > 0 ? { features: { trackRevisions: true } } : {}),
   });
 
   return Packer.toBlob(file);
 }
 
 // ---------------------------------------------------------------------------
+// Comments — helpers for the comments.xml entries built in exportDocx above.
+// ---------------------------------------------------------------------------
+
+/** "Jane Doe" -> "JD", matching Word's own comment-bubble initials convention. */
+function authorInitials(name: string): string | undefined {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const initials = parts
+    .slice(0, 3)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+  return initials || undefined;
+}
+
+/** A comment/reply's freeform text -> one Paragraph per line (comments.xml bodies are block content, not a bare string). */
+function textToParagraphs(text: string): Paragraph[] {
+  const lines = text.split("\n");
+  if (lines.length === 0) return [new Paragraph({})];
+  return lines.map((line) => new Paragraph({ children: [new TextRun({ text: line })] }));
+}
+
+// ---------------------------------------------------------------------------
 // Marks -> run properties
+//
+// `comment`, `insertion`, and `deletion` are handled by the caller
+// (inlineChildrenToDocx/buildRun above), not here. `modification` (a
+// formatting-change suggestion — see trackChanges.ts / the suggest-changes
+// library's schema) has no case below and is a deliberate simplification:
+// OOXML's real representation of a tracked formatting change is
+// `w:rPrChange` (the *previous* rPr nested inside the run's current rPr) —
+// modeling that fully is a deep rabbit hole per the task brief. Since the
+// run's other marks already reflect the *new* (suggested) formatting, a
+// modified run just exports with that formatting applied normally, as if
+// the suggestion had been accepted; only the "this was a suggested change"
+// annotation itself is lost on export.
 // ---------------------------------------------------------------------------
 
 function runPropsFromMarks(marks: readonly Mark[]): IRunStylePropertiesOptions {

@@ -27,10 +27,13 @@
     { label: "Double", value: "2" },
   ];
 
-  let openPopover = $state<null | "link" | "table" | "textColor" | "highlight">(null);
+  let openPopover = $state<null | "link" | "table" | "textColor" | "highlight" | "comment">(null);
   let linkUrl = $state("");
   let tableRows = $state(3);
   let tableCols = $state(3);
+  let commentText = $state("");
+
+  const hasSelection = $derived(!controller.snapshot.selectionEmpty);
 
   const paragraphStyleValue = $derived(
     controller.snapshot.block.kind === "heading" ? `h${controller.snapshot.block.level}` : "p",
@@ -54,7 +57,7 @@
     controller.setLineSpacing((e.target as HTMLSelectElement).value);
   }
 
-  function togglePopover(name: "link" | "table" | "textColor" | "highlight") {
+  function togglePopover(name: "link" | "table" | "textColor" | "highlight" | "comment") {
     openPopover = openPopover === name ? null : name;
   }
 
@@ -66,6 +69,12 @@
 
   function submitTable() {
     controller.insertTable(Math.max(1, tableRows), Math.max(1, tableCols));
+    openPopover = null;
+  }
+
+  function submitComment() {
+    if (commentText.trim()) controller.addCommentToSelection(commentText.trim());
+    commentText = "";
     openPopover = null;
   }
 
@@ -97,6 +106,15 @@
   <span class="ow-divider"></span>
 
   <button class="ow-icon-btn" title="Print (Ctrl+P)" onclick={() => window.print()}>{@html icons.iconPrint}</button>
+  <button
+    class="ow-icon-btn"
+    class:active={controller.formatPainterMarks !== null}
+    title="Format painter (click: paint once, double-click: keep painting)"
+    onclick={() => (controller.formatPainterMarks !== null ? controller.cancelFormatPainter() : controller.copyFormat(false))}
+    ondblclick={() => controller.copyFormat(true)}
+  >
+    {@html icons.iconFormatPainter}
+  </button>
 
   <span class="ow-divider"></span>
 
@@ -156,7 +174,30 @@
       </div>
     {/if}
   </div>
-  <button class="ow-icon-btn" title="Comments (coming soon)" disabled>{@html icons.iconComment}</button>
+  <div class="ow-popover-anchor">
+    <button
+      class="ow-icon-btn"
+      title={hasSelection ? "Insert comment (Ctrl+Alt+M)" : "Select text to comment on it"}
+      disabled={!hasSelection}
+      onclick={() => togglePopover("comment")}
+    >
+      {@html icons.iconComment}
+    </button>
+    {#if openPopover === "comment"}
+      <div class="ow-popover ow-popover-form">
+        <textarea
+          rows="3"
+          placeholder="Comment"
+          bind:value={commentText}
+          onkeydown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitComment();
+            if (e.key === "Escape") openPopover = null;
+          }}
+        ></textarea>
+        <button class="ow-btn-primary" onclick={submitComment}>Comment</button>
+      </div>
+    {/if}
+  </div>
   <button class="ow-icon-btn" title="Insert image" onclick={pickImage}>{@html icons.iconImage}</button>
   <div class="ow-popover-anchor">
     <button class="ow-icon-btn" title="Insert table" onclick={() => togglePopover("table")}>{@html icons.iconTable}</button>
@@ -240,13 +281,16 @@
   }
 
   .ow-popover-form input[type="text"],
-  .ow-popover-form input[type="number"] {
+  .ow-popover-form input[type="number"],
+  .ow-popover-form textarea {
     background: var(--ow-input-bg);
     border: 1px solid var(--ow-input-border);
     border-radius: var(--ow-radius);
     color: var(--ow-text);
     padding: 5px 7px;
     font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
   }
 
   .ow-popover-form label {

@@ -161,6 +161,53 @@ section breaks, complex numbering), track fidelity regressions with an
 automated round-trip test corpus (a goal explicitly called out by our
 research as release-blocking once the project matures past baseline).
 
+## Comments and track changes
+
+Both follow the same principle as everything else here: don't reinvent a
+solved problem, and don't let the document model carry data it doesn't need
+to.
+
+**Track changes** ("suggesting mode") is built on
+[`@handlewithcare/prosemirror-suggest-changes`](https://www.npmjs.com/package/@handlewithcare/prosemirror-suggest-changes)
+(MIT), not hand-rolled. We researched this rather than guessing: correctly
+intercepting every insert/delete/paste/cut so deletions become marks instead
+of real removals — while keeping selection and undo/redo sane — is exactly
+the kind of thing that's easy to get subtly wrong, and a well-maintained
+option existed (actively committed to, built against our exact ProseMirror
+peer dependencies, genuinely embeddable as a plugin + a `dispatchTransaction`
+wrapper). The library owns `insertion`/`deletion`/`modification` marks and
+the transaction-rewriting logic; it only tracks a bare suggestion id, with no
+concept of *who* made a change. We layer that on top ourselves in
+`src/editor/trackChanges.ts`: a side-store (`SuggestionMetaStore`, keyed by
+suggestion id) reconciled against the live document after every transaction,
+recording `{author, date}` for ids as they first appear and pruning ids that
+no longer exist (accepted, rejected, or otherwise removed) — the same
+"metadata lives outside the document model" pattern used for comments below,
+so the schema itself never needs to know about authorship.
+
+**Comments** are a `comment` mark (attrs: `{id}`, `excludes: ""` so
+overlapping threads with different ids can coexist on the same text — marks
+of the same name exclude each other by default, which would otherwise break
+overlapping comments) anchoring a text range to a `CommentThread`
+(`src/editor/comments.ts`). The thread's actual content — author, text,
+replies, resolved state — lives entirely outside the document, in the same
+kind of side-store as track-changes metadata. A comment mark just answers
+"which thread(s) does this range belong to"; nothing about *what the comment
+says* is recoverable from the document alone, by design.
+
+Both side-stores now travel with the document: `.owdoc` files are a
+versioned envelope (`{version: 2, doc, comments, suggestionMeta}` — see
+`src/editor/document.ts`) rather than a bare ProseMirror doc, and older
+plain-doc `.owdoc` files still open correctly (detected by the absence of
+the envelope). The UI is a single docked review panel
+(`src/components/ReviewPanel.svelte`, toggled from the status bar) with
+Comments and Changes tabs, rather than Google-Docs-style inline margin
+cards — deliberately: margin cards need pixel-accurate vertical alignment
+with their anchor, which depends on page layout details that are still
+evolving (see Pagination above), while a panel that jumps the selection to
+an anchor on click sidesteps that coupling entirely and is just as
+legitimate a review UX.
+
 ## ODT support
 
 Deferred. No existing open-source ODF library is trustworthy for round-trip
@@ -172,11 +219,11 @@ fidelity (WebODF is dormant, Rust ODF crates are immature). A one-way
 Being upfront about what the baseline doesn't do yet, rather than leaving a
 dead button or a surprising failure:
 
-- **Comments and track changes** are not implemented. The toolbar/menu
-  entries exist but are disabled / show an explanatory message rather than
-  silently doing nothing. This is a natural v2 feature once the pagination
-  and docx-fidelity work has a stable document model to anchor comment
-  threads to.
+- **Comments and track changes** work natively (add/reply/resolve comments,
+  suggesting-mode insertions/deletions with accept/reject, both in a docked
+  review panel) and round-trip through OpenWord's own `.owdoc` format.
+  Real-time multi-user collaboration on either is not implemented — the
+  "author" is just a locally-set display name, there's no live sync.
 - **Spellcheck** relies entirely on the OS/webview's native spellchecker
   (the ProseMirror content area sets `spellcheck="true"`) rather than a
   bundled dictionary/grammar engine — deliberately, to avoid bundling a

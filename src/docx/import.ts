@@ -4,18 +4,19 @@
 // fidelity" section for the real parse -> model -> serialize roadmap (v2).
 
 import JSZip from "jszip";
-import type { Node as PMNode } from "prosemirror-model";
-import { docFromJSON, emptyDoc } from "../editor/document";
+import { docFromJSON, emptyDoc, type LoadedDocument } from "../editor/document";
+import type { CommentThread, CommentEntry } from "../editor/comments";
+import type { SuggestionMetaStore } from "../editor/trackChanges";
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
-export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<PMNode> {
+export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<LoadedDocument> {
   try {
     const zip = await JSZip.loadAsync(bytes);
     const documentFile = zip.file("word/document.xml");
-    if (!documentFile) return emptyDoc();
+    if (!documentFile) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
     const documentXml = await documentFile.async("string");
 
     const relsFile = zip.file("word/_rels/document.xml.rels");
@@ -26,24 +27,71 @@ export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<PMNod
     const numberingXml = numberingFile ? await numberingFile.async("string") : undefined;
     const numberingDefs = parseNumbering(numberingXml);
 
+    const stylesFile = zip.file("word/styles.xml");
+    const stylesXml = stylesFile ? await stylesFile.async("string") : undefined;
+    const styleDefs = parseStyles(stylesXml);
+
     const media = await loadMedia(zip, rels);
 
-    const xmlDoc = new DOMParser().parseFromString(documentXml, "application/xml");
-    if (xmlDoc.getElementsByTagName("parsererror").length > 0) return emptyDoc();
-    const bodyEl = findChild(xmlDoc.documentElement, "body");
-    if (!bodyEl) return emptyDoc();
+    const commentsFile = zip.file("word/comments.xml");
+    const commentsXml = commentsFile ? await commentsFile.async("string") : undefined;
+    const commentsExtendedFile = zip.file("word/commentsExtended.xml");
+    const commentsExtendedXml = commentsExtendedFile ? await commentsExtendedFile.async("string") : undefined;
+    const { threads: comments, numericToThreadId } = parseComments(commentsXml, commentsExtendedXml);
 
-    const ctx: ImportContext = { rels, media, numberingDefs };
+    // Track changes: w:ins/w:del only carry an id/author/date on the XML
+    // element itself (no side-store there, unlike our PM schema) — resolve
+    // each distinct (kind, w:id, author, w:date) combination to one fresh PM
+    // suggestion id, and collect the author/date into a SuggestionMetaStore
+    // as we go, mirroring src/editor/trackChanges.ts's id-keyed side-store.
+    const suggestionMeta: SuggestionMetaStore = {};
+    const suggestionIdMap = new Map<string, number>();
+    let nextSuggestionId = 1;
+    const resolveSuggestionId = (kind: "insertion" | "deletion", wId: string, author: string, dateStr: string): number => {
+      const key = `${kind}|${wId}|${author}|${dateStr}`;
+      let id = suggestionIdMap.get(key);
+      if (id === undefined) {
+        id = nextSuggestionId++;
+        suggestionIdMap.set(key, id);
+        suggestionMeta[String(id)] = { author: author || "Unknown", date: parseOoxmlDate(dateStr) };
+      }
+      return id;
+    };
+
+    const xmlDoc = new DOMParser().parseFromString(documentXml, "application/xml");
+    if (xmlDoc.getElementsByTagName("parsererror").length > 0) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+    const bodyEl = findChild(xmlDoc.documentElement, "body");
+    if (!bodyEl) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+
+    const ctx: ImportContext = {
+      rels,
+      media,
+      numberingDefs,
+      styleDefs,
+      commentThreadIdByNumericId: numericToThreadId,
+      resolveSuggestionId,
+    };
     const content = convertBody(bodyEl, ctx);
     if (content.length === 0) content.push({ type: "paragraph" });
 
-    return docFromJSON({ type: "doc", content });
+    return { doc: docFromJSON({ type: "doc", content }), comments, suggestionMeta };
   } catch (err) {
     // A malformed/unsupported .docx must never crash the caller — degrade to
     // an empty (but valid) document rather than losing the whole import.
     console.error("importDocx: failed to parse document, returning an empty document", err);
-    return emptyDoc();
+    return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
   }
+}
+
+function parseOoxmlDate(dateStr: string | null | undefined): number {
+  if (!dateStr) return Date.now();
+  const t = Date.parse(dateStr);
+  return Number.isFinite(t) ? t : Date.now();
+}
+
+function genId(prefix: string): string {
+  const random = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +116,9 @@ interface ImportContext {
   rels: Map<string, RelInfo>;
   media: Map<string, string>; // relationship id -> data: URL
   numberingDefs: Map<string, NumDef>;
+  styleDefs: Map<string, StyleDef>;
+  commentThreadIdByNumericId: Map<number, string>; // w:comment/@w:id -> reconstructed CommentThread.id
+  resolveSuggestionId: (kind: "insertion" | "deletion", wId: string, author: string, dateStr: string) => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +277,209 @@ function parseNumbering(numberingXml: string | undefined): Map<string, NumDef> {
 }
 
 // ---------------------------------------------------------------------------
+// Styles (word/styles.xml) — only as much as numbering resolution needs: a
+// paragraph style can declare its own w:numPr, and styles can chain via
+// w:basedOn. A paragraph with no direct w:numPr on itself still needs to be
+// recognized as a list item when its w:pStyle (or an ancestor in the
+// w:basedOn chain) carries one — direct w:numPr on the paragraph always
+// wins per OOXML precedence; this is purely the fallback for when it's
+// absent. Character/table/numbering styles are irrelevant here and skipped.
+// ---------------------------------------------------------------------------
+
+interface StyleDef {
+  basedOn: string | null;
+  numId: string | null;
+  ilvl: number;
+}
+
+function parseStyles(stylesXml: string | undefined): Map<string, StyleDef> {
+  const result = new Map<string, StyleDef>();
+  if (!stylesXml) return result;
+  try {
+    const doc = new DOMParser().parseFromString(stylesXml, "application/xml");
+    if (doc.getElementsByTagName("parsererror").length > 0) return result;
+    for (const styleEl of findChildren(doc.documentElement, "style")) {
+      if (styleEl.getAttribute("w:type") !== "paragraph") continue;
+      const styleId = styleEl.getAttribute("w:styleId");
+      if (!styleId) continue;
+      const pPr = findChild(styleEl, "pPr");
+      const basedOn = findChild(styleEl, "basedOn")?.getAttribute("w:val") || null;
+      const numPr = findChild(pPr, "numPr");
+      const numId = numPr ? findChild(numPr, "numId")?.getAttribute("w:val") || null : null;
+      const ilvl = numPr ? Math.max(0, parseInt(findChild(numPr, "ilvl")?.getAttribute("w:val") || "0", 10) || 0) : 0;
+      result.set(styleId, { basedOn, numId, ilvl });
+    }
+  } catch {
+    // malformed styles part: degrade to "no style-level numbering info" (direct w:numPr still works)
+  }
+  return result;
+}
+
+/** Walks a style's w:basedOn chain for the nearest w:numPr, since a style itself might not define one directly. */
+function resolveStyleNumPr(styleId: string | null, styles: Map<string, StyleDef>): { numId: string; ilvl: number } | null {
+  let current = styleId;
+  const seen = new Set<string>();
+  while (current && !seen.has(current)) {
+    seen.add(current); // cycle guard against malformed styles.xml (basedOn loops)
+    const def = styles.get(current);
+    if (!def) return null;
+    if (def.numId) return { numId: def.numId, ilvl: def.ilvl };
+    current = def.basedOn;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Comments (word/comments.xml + word/commentsExtended.xml)
+//
+// A plain (unthreaded) comment is one <w:comment> with no reply structure —
+// the common case, including every comment.xml Word itself writes when
+// there are no replies. Reply threading is a *second*, optional part
+// (commentsExtended.xml, using w15:paraId/w15:paraIdParent) that links
+// <w:comment> elements to each other via the w14:paraId Word stamps on each
+// comment body's last paragraph — there's no parent-id on <w:comment>
+// itself. We reconstruct that graph, then flatten each root + its
+// descendants into one CommentThread (entries in comments.xml order),
+// falling back to "every comment is its own thread" when commentsExtended
+// is absent/malformed or a comment has no paraId to key off of.
+// ---------------------------------------------------------------------------
+
+interface CommentDef {
+  id: number;
+  author: string;
+  date: number;
+  text: string;
+  paraId: string | null;
+}
+
+function parseComments(
+  commentsXml: string | undefined,
+  commentsExtendedXml: string | undefined,
+): { threads: CommentThread[]; numericToThreadId: Map<number, string> } {
+  const numericToThreadId = new Map<number, string>();
+  if (!commentsXml) return { threads: [], numericToThreadId };
+  try {
+    const doc = new DOMParser().parseFromString(commentsXml, "application/xml");
+    if (doc.getElementsByTagName("parsererror").length > 0) return { threads: [], numericToThreadId };
+    const root = doc.documentElement;
+
+    const defs = new Map<number, CommentDef>();
+    const order: number[] = [];
+    for (const commentEl of findChildren(root, "comment")) {
+      const idRaw = commentEl.getAttribute("w:id");
+      if (idRaw === null) continue;
+      const id = parseInt(idRaw, 10);
+      if (!Number.isFinite(id)) continue;
+      const author = commentEl.getAttribute("w:author") || "Unknown";
+      const date = parseOoxmlDate(commentEl.getAttribute("w:date"));
+      const paragraphs = findChildren(commentEl, "p");
+      const text = paragraphs
+        .map((p) => (p.textContent || "").trim())
+        .join("\n")
+        .trim();
+      let paraId: string | null = null;
+      for (let i = paragraphs.length - 1; i >= 0; i--) {
+        const pid = paragraphs[i].getAttribute("w14:paraId");
+        if (pid) {
+          paraId = pid;
+          break;
+        }
+      }
+      defs.set(id, { id, author, date, text, paraId });
+      order.push(id);
+    }
+    if (defs.size === 0) return { threads: [], numericToThreadId };
+
+    const exByParaId = new Map<string, { parentParaId: string | null; done: boolean }>();
+    if (commentsExtendedXml) {
+      try {
+        const exDoc = new DOMParser().parseFromString(commentsExtendedXml, "application/xml");
+        if (exDoc.getElementsByTagName("parsererror").length === 0) {
+          for (const ex of findChildren(exDoc.documentElement, "commentEx")) {
+            const paraId = ex.getAttribute("w15:paraId");
+            if (!paraId) continue;
+            exByParaId.set(paraId, {
+              parentParaId: ex.getAttribute("w15:paraIdParent") || null,
+              done: ex.getAttribute("w15:done") === "1",
+            });
+          }
+        }
+      } catch {
+        // malformed commentsExtended part: fall back to flat (unthreaded) comments below
+      }
+    }
+
+    const paraIdToCommentId = new Map<string, number>();
+    for (const def of defs.values()) if (def.paraId) paraIdToCommentId.set(def.paraId, def.id);
+
+    const parentOf = new Map<number, number | null>();
+    const doneOf = new Map<number, boolean>();
+    for (const def of defs.values()) {
+      let parent: number | null = null;
+      let done = false;
+      if (def.paraId) {
+        const ex = exByParaId.get(def.paraId);
+        if (ex) {
+          done = ex.done;
+          if (ex.parentParaId) parent = paraIdToCommentId.get(ex.parentParaId) ?? null;
+        }
+      }
+      parentOf.set(def.id, parent);
+      doneOf.set(def.id, done);
+    }
+
+    const isDescendantOrSelf = (candidateId: number, rootId: number): boolean => {
+      let current: number | null = candidateId;
+      const seen = new Set<number>();
+      while (current !== null) {
+        if (current === rootId) return true;
+        if (seen.has(current)) return false; // cycle guard against malformed threading data
+        seen.add(current);
+        current = parentOf.get(current) ?? null;
+      }
+      return false;
+    };
+
+    const threads: CommentThread[] = [];
+    const visited = new Set<number>();
+    for (const id of order) {
+      if (parentOf.get(id)) continue; // has a parent: folded into its root's thread below
+      if (visited.has(id)) continue;
+      const memberIds = order.filter((candidateId) => isDescendantOrSelf(candidateId, id));
+      for (const m of memberIds) visited.add(m);
+      const threadId = genId("comment");
+      const entries: CommentEntry[] = memberIds.map((mid) => {
+        const def = defs.get(mid)!;
+        return { id: genId("entry"), author: def.author, text: def.text, createdAt: def.date };
+      });
+      const resolved = memberIds.some((mid) => doneOf.get(mid));
+      threads.push({ id: threadId, resolved, entries });
+      for (const mid of memberIds) numericToThreadId.set(mid, threadId);
+    }
+    // Defensive: a reply whose parent id doesn't resolve to any known
+    // comment (malformed threading data) still gets a thread of its own
+    // rather than being silently dropped.
+    for (const id of order) {
+      if (visited.has(id)) continue;
+      const def = defs.get(id)!;
+      const threadId = genId("comment");
+      threads.push({
+        id: threadId,
+        resolved: doneOf.get(id) || false,
+        entries: [{ id: genId("entry"), author: def.author, text: def.text, createdAt: def.date }],
+      });
+      numericToThreadId.set(id, threadId);
+      visited.add(id);
+    }
+
+    return { threads, numericToThreadId };
+  } catch (err) {
+    console.warn("importDocx: failed to parse comments, continuing without them", err);
+    return { threads: [], numericToThreadId: new Map() };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Paragraph-level property readers
 // ---------------------------------------------------------------------------
 
@@ -286,12 +540,23 @@ function readPageBreakBefore(pPr: Element | null): boolean {
   return onOff(findChild(pPr, "pageBreakBefore"));
 }
 
-function readNumPr(pPr: Element | null, defs: Map<string, NumDef>): { level: number; kind: "bullet_list" | "ordered_list"; start: number } | null {
+function readNumPr(
+  pPr: Element | null,
+  defs: Map<string, NumDef>,
+  styleNumPr: { numId: string; ilvl: number } | null,
+): { level: number; kind: "bullet_list" | "ordered_list"; start: number } | null {
   const numPr = findChild(pPr, "numPr");
-  if (!numPr) return null;
-  const numId = findChild(numPr, "numId")?.getAttribute("w:val");
-  if (!numId) return null;
-  const level = Math.max(0, parseInt(findChild(numPr, "ilvl")?.getAttribute("w:val") || "0", 10) || 0);
+  let numId = numPr ? findChild(numPr, "numId")?.getAttribute("w:val") || null : null;
+  let level = numPr ? Math.max(0, parseInt(findChild(numPr, "ilvl")?.getAttribute("w:val") || "0", 10) || 0) : 0;
+  if (numPr && numId === "0") return null; // explicit "no numbering" override of an inherited style — direct numPr wins
+  if (!numId) {
+    // No direct w:numPr on the paragraph itself: fall back to whatever its
+    // paragraph style (w:pStyle, walking w:basedOn) declares — see the note
+    // above parseStyles/resolveStyleNumPr.
+    if (!styleNumPr) return null;
+    numId = styleNumPr.numId;
+    level = styleNumPr.ilvl;
+  }
   const levelDef = defs.get(numId)?.levels.get(level);
   const isBullet = levelDef ? levelDef.format === "bullet" : true;
   return { level, kind: isBullet ? "bullet_list" : "ordered_list", start: levelDef?.start ?? 1 };
@@ -397,6 +662,13 @@ function buildParagraphBlocks(
   const pushInline = (node: unknown) => current.push(node);
   const withMarks = (node: Record<string, unknown>, marks: MarkJSON[]) => (marks.length ? { ...node, marks } : node);
 
+  // w:commentRangeStart/End are siblings of w:r (and w:hyperlink) at the
+  // paragraph level, not nested inside a run — this is a simple mutable
+  // "currently open" stack, shared across the whole `walk` recursion for
+  // this paragraph (comment ranges never cross paragraph boundaries, so it
+  // never needs to survive past this buildParagraphBlocks call).
+  const activeCommentIds: string[] = [];
+
   function processRun(runEl: Element, marks: MarkJSON[]) {
     const rPr = findChild(runEl, "rPr");
     const runMarks = [...marks, ...marksFromRPr(rPr)];
@@ -451,9 +723,14 @@ function buildParagraphBlocks(
     for (const child of Array.from(el.children)) {
       const local = localName(child);
       switch (local) {
-        case "r":
-          processRun(child, marks);
+        case "r": {
+          const runMarks =
+            activeCommentIds.length > 0
+              ? [...marks, ...activeCommentIds.map((id) => ({ type: "comment", attrs: { id } }))]
+              : marks;
+          processRun(child, runMarks);
           break;
+        }
         case "hyperlink": {
           const rId = child.getAttribute("r:id");
           const anchor = child.getAttribute("w:anchor");
@@ -463,10 +740,28 @@ function buildParagraphBlocks(
           walk(child, href ? [...marks, { type: "link", attrs: { href } }] : marks);
           break;
         }
-        case "ins":
-        case "del":
+        case "ins": {
+          const id = ctx.resolveSuggestionId(
+            "insertion",
+            child.getAttribute("w:id") || "",
+            child.getAttribute("w:author") || "",
+            child.getAttribute("w:date") || "",
+          );
+          walk(child, [...marks, { type: "insertion", attrs: { id } }]);
+          break;
+        }
+        case "del": {
+          const id = ctx.resolveSuggestionId(
+            "deletion",
+            child.getAttribute("w:id") || "",
+            child.getAttribute("w:author") || "",
+            child.getAttribute("w:date") || "",
+          );
+          walk(child, [...marks, { type: "deletion", attrs: { id } }]);
+          break;
+        }
         case "smartTag":
-          // Tracked-change / smart-tag wrappers: drop the metadata, keep the content.
+          // Non-tracked-change wrapper we don't model: drop the metadata, keep the content.
           walk(child, marks);
           break;
         case "sdt": {
@@ -474,8 +769,23 @@ function buildParagraphBlocks(
           if (content) walk(content, marks);
           break;
         }
+        case "commentRangeStart": {
+          const numId = parseInt(child.getAttribute("w:id") || "", 10);
+          const threadId = Number.isFinite(numId) ? ctx.commentThreadIdByNumericId.get(numId) : undefined;
+          if (threadId) activeCommentIds.push(threadId);
+          break;
+        }
+        case "commentRangeEnd": {
+          const numId = parseInt(child.getAttribute("w:id") || "", 10);
+          const threadId = Number.isFinite(numId) ? ctx.commentThreadIdByNumericId.get(numId) : undefined;
+          if (threadId) {
+            const idx = activeCommentIds.lastIndexOf(threadId);
+            if (idx !== -1) activeCommentIds.splice(idx, 1);
+          }
+          break;
+        }
         default:
-          break; // bookmarks, proofErr, comment anchors, unknown elements: skip
+          break; // bookmarks, proofErr, and other unknown elements: skip
       }
     }
   }
@@ -566,7 +876,9 @@ function handleParagraphElement(pEl: Element, ctx: ImportContext, listState: Lis
   // a literal `paragraph` as its first child, which a `heading` node can't
   // satisfy. Numbered headings therefore import as plain headings (losing
   // only the numbering, not the text/structure) — an explicit v1 tradeoff.
-  const numInfo = headingLevel === null ? readNumPr(pPr, ctx.numberingDefs) : null;
+  const styleId = findChild(pPr, "pStyle")?.getAttribute("w:val") || null;
+  const styleNumPr = resolveStyleNumPr(styleId, ctx.styleDefs);
+  const numInfo = headingLevel === null ? readNumPr(pPr, ctx.numberingDefs, styleNumPr) : null;
 
   const blocks = buildParagraphBlocks(pEl, { align, indent, lineSpacing }, headingLevel, ctx);
 
