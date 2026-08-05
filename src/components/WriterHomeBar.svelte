@@ -15,7 +15,7 @@
 </script>
 
 <nav class="ow-writer-home" aria-label="Home">
-  <div class="ow-writer-group" aria-label="File and history">
+  <div class="ow-writer-group compact" aria-label="File and history">
     <button type="button" title="Save" disabled={!client || !state.ready} on:click={onsave}>Save</button>
     <button type="button" title="Undo" disabled={!client || !state.ready} on:click={() => execute({ type: "history.undo" })}>Undo</button>
     <button type="button" title="Redo" disabled={!client || !state.ready} on:click={() => execute({ type: "history.redo" })}>Redo</button>
@@ -23,7 +23,7 @@
 
   <span class="ow-writer-separator" aria-hidden="true"></span>
 
-  <div class="ow-writer-group" aria-label="Font formatting">
+  <div class="ow-writer-group" aria-label="Font">
     <button
       type="button"
       class:active={state.bold}
@@ -49,23 +49,92 @@
       on:click={() => execute({ type: "format.toggleUnderline" })}
     ><u>U</u></button>
   </div>
+
+  <span class="ow-writer-separator" aria-hidden="true"></span>
+
+  <div class="ow-writer-group" aria-label="Paragraph">
+    <button
+      type="button"
+      class:active={state.alignment === "left"}
+      aria-pressed={state.alignment === "left"}
+      title="Align left"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "paragraph.alignLeft" })}
+    >L</button>
+    <button
+      type="button"
+      class:active={state.alignment === "center"}
+      aria-pressed={state.alignment === "center"}
+      title="Center"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "paragraph.alignCenter" })}
+    >C</button>
+    <button
+      type="button"
+      class:active={state.alignment === "right"}
+      aria-pressed={state.alignment === "right"}
+      title="Align right"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "paragraph.alignRight" })}
+    >R</button>
+    <button
+      type="button"
+      class:active={state.alignment === "justify"}
+      aria-pressed={state.alignment === "justify"}
+      title="Justify"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "paragraph.alignJustify" })}
+    >J</button>
+    <button
+      type="button"
+      class:active={state.bullets}
+      aria-pressed={state.bullets}
+      title="Bullets"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "list.toggleBullets" })}
+    >• List</button>
+    <button
+      type="button"
+      class:active={state.numbering}
+      aria-pressed={state.numbering}
+      title="Numbering"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "list.toggleNumbering" })}
+    >1. List</button>
+  </div>
+
+  <span class="ow-writer-separator" aria-hidden="true"></span>
+
+  <div class="ow-writer-group" aria-label="Insert">
+    <button
+      type="button"
+      title="Page break"
+      disabled={!client || !state.ready}
+      on:click={() => execute({ type: "insert.pageBreak" })}
+    >Page break</button>
+  </div>
 </nav>
 
 <style>
   .ow-writer-home {
-    height: 40px;
+    min-height: 44px;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 10px;
+    padding: 6px 10px;
     border-bottom: 1px solid var(--ow-chrome-border);
     background: var(--ow-chrome-bg);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+
+  .ow-writer-home::-webkit-scrollbar { display: none; }
 
   .ow-writer-group {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    flex: none;
   }
 
   button {
@@ -76,7 +145,9 @@
     border-radius: var(--ow-radius);
     background: transparent;
     color: var(--ow-text);
+    font-size: 12px;
     cursor: pointer;
+    white-space: nowrap;
   }
 
   button:hover:not(:disabled) {
@@ -95,7 +166,27 @@
 
   .ow-writer-separator {
     width: 1px;
-    height: 24px;
+    height: 26px;
     background: var(--ow-divider);
+    flex: none;
+  }
+
+  @media (max-width: 820px) {
+    .ow-writer-group.compact button {
+      max-width: 34px;
+      overflow: hidden;
+      text-indent: -999px;
+      position: relative;
+    }
+
+    .ow-writer-group.compact button::after {
+      content: attr(title);
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      text-indent: 0;
+      font-size: 10px;
+    }
   }
 </style>
