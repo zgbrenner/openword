@@ -1,4 +1,4 @@
-import type { WriterError, WriterEvent, WriterFormat } from "./protocol";
+import type { ParagraphAlignment, WriterError, WriterEvent, WriterFormat } from "./protocol";
 
 export class WriterState {
   ready = $state(false);
@@ -8,6 +8,9 @@ export class WriterState {
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
+  alignment = $state<ParagraphAlignment>("left");
+  bullets = $state(false);
+  numbering = $state(false);
   fileName = $state("Document1.docx");
   filePath = $state<string | null>(null);
   format = $state<WriterFormat>("docx");
@@ -26,6 +29,11 @@ export class WriterState {
         this.bold = event.payload.bold;
         this.italic = event.payload.italic;
         this.underline = event.payload.underline;
+        break;
+      case "selection.paragraph":
+        this.alignment = event.payload.alignment;
+        this.bullets = event.payload.bullets;
+        this.numbering = event.payload.numbering;
         break;
       case "engine.failure":
         this.ready = false;
