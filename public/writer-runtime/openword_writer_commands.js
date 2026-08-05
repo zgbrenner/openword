@@ -13,5 +13,7 @@ var OPENWORD_WRITER_COMMANDS = Object.freeze({
   "paragraph.alignJustify": ".uno:JustifyPara",
   "list.toggleBullets": ".uno:DefaultBullet",
   "list.toggleNumbering": ".uno:DefaultNumbering",
-  "insert.pageBreak": ".uno:InsertPagebreak"
+  "insert.pageBreak": ".uno:InsertPagebreak",
+  "header.edit": ".uno:JumpToHeader",
+  "footer.edit": ".uno:JumpToFooter"
 });
