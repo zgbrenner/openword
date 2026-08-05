@@ -37,7 +37,17 @@ for (const [name, source] of Object.entries(lock.sources)) {
   }
 }
 
-for (const file of manifest.runtimeFiles) {
+const filesToVerify = [...manifest.runtimeFiles];
+for (const file of manifest.optionalRuntimeFiles ?? []) {
+  const existsOnDisk = existsSync(resolve(runtimeDir, file));
+  const recorded = artifacts.files?.[file];
+  if (existsOnDisk !== Boolean(recorded)) {
+    throw new Error(`Optional Writer runtime artifact state mismatch: ${file}`);
+  }
+  if (existsOnDisk) filesToVerify.push(file);
+}
+
+for (const file of filesToVerify) {
   const bytes = readFileSync(resolve(runtimeDir, file));
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const recorded = artifacts.files?.[file];
