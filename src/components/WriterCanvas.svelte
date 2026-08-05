@@ -14,27 +14,49 @@
   let failure: Error | null = null;
   let generation = 0;
 
+  function disposePair(nextClient: WriterClient | null, nextHost: WriterRuntimeHost | null) {
+    nextClient?.destroy();
+    nextHost?.destroy();
+  }
+
   async function initialize() {
     const currentGeneration = ++generation;
     loading = true;
     failure = null;
-    client?.destroy();
-    host?.destroy();
+    disposePair(client, host);
     client = null;
-    host = new WriterRuntimeHost();
+    host = null;
+
+    const nextHost = new WriterRuntimeHost();
+    host = nextHost;
 
     try {
-      const transport = await host.start(canvas);
-      if (currentGeneration !== generation) return;
-      client = new WriterClient(transport);
-      await client.ping();
-      if (currentGeneration !== generation) return;
+      const transport = await nextHost.start(canvas);
+      if (currentGeneration !== generation) {
+        disposePair(null, nextHost);
+        return;
+      }
+
+      const nextClient = new WriterClient(transport);
+      client = nextClient;
+      await nextClient.ping();
+      if (currentGeneration !== generation) {
+        disposePair(nextClient, nextHost);
+        return;
+      }
+
       loading = false;
-      onready(client, host);
+      onready(nextClient, nextHost);
       requestAnimationFrame(() => canvas.focus());
     } catch (error) {
-      if (currentGeneration !== generation) return;
+      if (currentGeneration !== generation) {
+        disposePair(client, nextHost);
+        return;
+      }
       const normalized = error instanceof Error ? error : new Error(String(error));
+      disposePair(client, nextHost);
+      client = null;
+      host = null;
       loading = false;
       failure = normalized;
       onfailure(normalized);
@@ -49,8 +71,9 @@
     return () => {
       generation += 1;
       resizeObserver.disconnect();
-      client?.destroy();
-      host?.destroy();
+      disposePair(client, host);
+      client = null;
+      host = null;
     };
   });
 </script>
