@@ -34,7 +34,14 @@ export type WriterCommand =
   | {
       type: "pageStyle.setPaperSize";
       paperSize: Exclude<PagePaperSize, "custom">;
-    };
+    }
+  | { type: "review.toggleTrackChanges" }
+  | { type: "review.previousChange" }
+  | { type: "review.nextChange" }
+  | { type: "review.acceptChange" }
+  | { type: "review.rejectChange" }
+  | { type: "review.acceptAllChanges" }
+  | { type: "review.rejectAllChanges" };
 
 export type WriterRequestMethod =
   | "engine.ping"
@@ -75,6 +82,11 @@ export type WriterEvent =
       kind: "event";
       event: "document.statistics";
       payload: { pageLabel: string; pageTooltip: string; wordCountLabel: string };
+    }
+  | {
+      kind: "event";
+      event: "review.state";
+      payload: { trackChangesEnabled: boolean };
     }
   | {
       kind: "event";
