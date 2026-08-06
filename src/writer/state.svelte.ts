@@ -14,6 +14,9 @@ export class WriterState {
   requiresSaveAs = $state(false);
   failure = $state<WriterError | null>(null);
   engineVersion = $state<string | null>(null);
+  pageLabel = $state("");
+  pageTooltip = $state("");
+  wordCountLabel = $state("");
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
@@ -41,6 +44,11 @@ export class WriterState {
         break;
       case "document.changed":
         this.dirty = this.requiresSaveAs || event.payload.dirty;
+        break;
+      case "document.statistics":
+        this.pageLabel = event.payload.pageLabel;
+        this.pageTooltip = event.payload.pageTooltip;
+        this.wordCountLabel = event.payload.wordCountLabel;
         break;
       case "selection.formatting":
         this.bold = event.payload.bold;
