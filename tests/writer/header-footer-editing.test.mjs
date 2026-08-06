@@ -21,10 +21,12 @@ test("UNO worker enables a missing page region before navigating into it", () =>
   assert.match(worker, /if \(type === "footer\.edit"\)/);
 });
 
-test("visible controls enter the current page header or footer", () => {
+test("visible icon controls enter the current page header or footer", () => {
   const home = read("src/components/WriterHomeBar.svelte");
   assert.match(home, /type:\s*"header\.edit"/);
   assert.match(home, /type:\s*"footer\.edit"/);
-  assert.match(home, />Edit header<\/button>/);
-  assert.match(home, />Edit footer<\/button>/);
+  assert.match(home, /<WriterGlyph name="header"/);
+  assert.match(home, /<WriterGlyph name="footer"/);
+  assert.match(home, /<span>Edit header<\/span>/);
+  assert.match(home, /<span>Edit footer<\/span>/);
 });
