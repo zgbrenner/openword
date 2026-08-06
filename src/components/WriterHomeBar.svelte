@@ -9,14 +9,14 @@
   import type { WriterState } from "@/writer/state.svelte";
   import WriterGlyph from "./WriterGlyph.svelte";
 
-  type RibbonTab = "home" | "insert" | "layout";
+  type RibbonTab = "home" | "insert" | "layout" | "review";
 
   export let client: WriterClient | null;
   export let state: WriterState;
   export let onsave: () => void | Promise<void>;
   export let onerror: (error: unknown) => void = () => {};
 
-  const tabs: readonly RibbonTab[] = ["home", "insert", "layout"];
+  const tabs: readonly RibbonTab[] = ["home", "insert", "layout", "review"];
   const fontFamilies = [
     "Aptos",
     "Calibri",
@@ -120,6 +120,7 @@
       <button id="ow-ribbon-tab-home" class:active={activeTab === "home"} type="button" role="tab" aria-selected={activeTab === "home"} aria-controls="ow-ribbon-panel-home" tabindex={activeTab === "home" ? 0 : -1} on:click={() => selectTab("home")} on:keydown={(event) => handleTabKeydown(event, "home")}>Home</button>
       <button id="ow-ribbon-tab-insert" class:active={activeTab === "insert"} type="button" role="tab" aria-selected={activeTab === "insert"} aria-controls="ow-ribbon-panel-insert" tabindex={activeTab === "insert" ? 0 : -1} on:click={() => selectTab("insert")} on:keydown={(event) => handleTabKeydown(event, "insert")}>Insert</button>
       <button id="ow-ribbon-tab-layout" class:active={activeTab === "layout"} type="button" role="tab" aria-selected={activeTab === "layout"} aria-controls="ow-ribbon-panel-layout" tabindex={activeTab === "layout" ? 0 : -1} on:click={() => selectTab("layout")} on:keydown={(event) => handleTabKeydown(event, "layout")}>Layout</button>
+      <button id="ow-ribbon-tab-review" class:active={activeTab === "review"} type="button" role="tab" aria-selected={activeTab === "review"} aria-controls="ow-ribbon-panel-review" tabindex={activeTab === "review" ? 0 : -1} on:click={() => selectTab("review")} on:keydown={(event) => handleTabKeydown(event, "review")}>Review</button>
     </div>
 
     <div class="document-name" title={state.fileName}>{state.fileName}</div>
@@ -206,6 +207,33 @@
         <span>Current Style</span>
       </section>
     </div>
+  {:else}
+    <div id="ow-ribbon-panel-review" class="panel" role="tabpanel" aria-labelledby="ow-ribbon-tab-review">
+      <section class="group" aria-label="Tracking">
+        <div class="group-body horizontal">
+          <button class="command large review-command" class:active={state.trackChangesEnabled} type="button" aria-label="Track changes" aria-pressed={state.trackChangesEnabled} title="Record tracked changes" disabled={unavailable} on:click={() => void execute({ type: "review.toggleTrackChanges" })}><span class="review-symbol">●</span><span>Track changes</span></button>
+        </div>
+        <span>Tracking</span>
+      </section>
+
+      <section class="group" aria-label="Changes">
+        <div class="group-body horizontal">
+          <button class="command large review-command" type="button" aria-label="Previous tracked change" title="Previous tracked change" disabled={unavailable} on:click={() => void execute({ type: "review.previousChange" })}><span class="review-symbol">‹</span><span>Previous</span></button>
+          <button class="command large review-command" type="button" aria-label="Next tracked change" title="Next tracked change" disabled={unavailable} on:click={() => void execute({ type: "review.nextChange" })}><span class="review-symbol">›</span><span>Next</span></button>
+          <button class="command large review-command" type="button" aria-label="Accept tracked change" title="Accept tracked change" disabled={unavailable} on:click={() => void execute({ type: "review.acceptChange" })}><span class="review-symbol">✓</span><span>Accept</span></button>
+          <button class="command large review-command" type="button" aria-label="Reject tracked change" title="Reject tracked change" disabled={unavailable} on:click={() => void execute({ type: "review.rejectChange" })}><span class="review-symbol">×</span><span>Reject</span></button>
+        </div>
+        <span>Changes</span>
+      </section>
+
+      <section class="group" aria-label="All changes">
+        <div class="group-body horizontal">
+          <button class="command large review-command wide" type="button" aria-label="Accept all tracked changes" title="Accept all tracked changes" disabled={unavailable} on:click={() => void execute({ type: "review.acceptAllChanges" })}><span class="review-symbol">✓✓</span><span>Accept all</span></button>
+          <button class="command large review-command wide" type="button" aria-label="Reject all tracked changes" title="Reject all tracked changes" disabled={unavailable} on:click={() => void execute({ type: "review.rejectAllChanges" })}><span class="review-symbol">××</span><span>Reject all</span></button>
+        </div>
+        <span>Document</span>
+      </section>
+    </div>
   {/if}
 </header>
 
@@ -239,6 +267,9 @@
   .command.large { width: 70px; height: 58px; flex-direction: column; gap: 3px; padding: 4px 5px 3px; font-size: 10px; line-height: 1.05; text-align: center; }
   .command.large > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .command.active { color: var(--ow-accent); background: var(--ow-active-bg); }
+  .review-command { width: 68px; }
+  .review-command.wide { width: 78px; }
+  .review-symbol { min-height: 22px; display: inline-flex; align-items: center; font-size: 20px; line-height: 1; }
   .fields { display: grid; align-content: center; gap: 3px; margin-right: 6px; }
   .fields label { display: grid; grid-template-columns: 64px 104px; align-items: center; gap: 5px; color: var(--ow-text-muted); font-size: 10px; }
   .fields select { width: 104px; height: 22px; padding: 0 20px 0 7px; border: 1px solid var(--ow-input-border); border-radius: 4px; background: var(--ow-input-bg); color: var(--ow-text); font-size: 10.5px; }
