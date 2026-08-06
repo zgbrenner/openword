@@ -17,6 +17,19 @@
   export let onerror: (error: unknown) => void = () => {};
 
   const tabs: readonly RibbonTab[] = ["home", "insert", "layout"];
+  const fontFamilies = [
+    "Aptos",
+    "Calibri",
+    "Carlito",
+    "Arial",
+    "Times New Roman",
+    "Liberation Serif",
+    "Georgia",
+    "Courier New",
+    "Verdana",
+  ] as const;
+  const fontSizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72] as const;
+
   let activeTab: RibbonTab = "home";
   $: unavailable = !client || !state.ready;
 
@@ -61,6 +74,24 @@
     selectTab(tabs[next], true);
   }
 
+  function includesFontFamily(value: string): boolean {
+    return fontFamilies.some((fontFamily) => fontFamily === value);
+  }
+
+  function includesFontSize(value: number): boolean {
+    return fontSizes.some((fontSize) => fontSize === value);
+  }
+
+  function changeFontFamily(event: Event): void {
+    const fontFamily = (event.currentTarget as HTMLSelectElement).value;
+    if (fontFamily) void execute({ type: "format.setFontFamily", fontFamily });
+  }
+
+  function changeFontSize(event: Event): void {
+    const fontSize = Number((event.currentTarget as HTMLSelectElement).value);
+    if (Number.isFinite(fontSize)) void execute({ type: "format.setFontSize", fontSize });
+  }
+
   function changeOrientation(event: Event): void {
     const orientation = (event.currentTarget as HTMLSelectElement).value as PageOrientation;
     void execute({ type: "pageStyle.setOrientation", orientation });
@@ -97,7 +128,25 @@
   {#if activeTab === "home"}
     <div id="ow-ribbon-panel-home" class="panel" role="tabpanel" aria-labelledby="ow-ribbon-tab-home">
       <section class="group" aria-label="Font">
-        <div class="group-body horizontal">
+        <div class="group-body horizontal font-group">
+          <select aria-label="Font family" title="Font family" value={state.fontFamily} disabled={unavailable} on:change={changeFontFamily}>
+            {#if !state.fontFamily}<option value="" disabled>Mixed</option>{/if}
+            {#if state.fontFamily && !includesFontFamily(state.fontFamily)}
+              <option value={state.fontFamily}>{state.fontFamily}</option>
+            {/if}
+            {#each fontFamilies as fontFamily}
+              <option value={fontFamily}>{fontFamily}</option>
+            {/each}
+          </select>
+          <select class="font-size" aria-label="Font size" title="Font size" value={state.fontSize === null ? "" : String(state.fontSize)} disabled={unavailable} on:change={changeFontSize}>
+            {#if state.fontSize === null}<option value="" disabled>Mixed</option>{/if}
+            {#if state.fontSize !== null && !includesFontSize(state.fontSize)}
+              <option value={state.fontSize}>{state.fontSize}</option>
+            {/if}
+            {#each fontSizes as fontSize}
+              <option value={fontSize}>{fontSize}</option>
+            {/each}
+          </select>
           <button class="command" class:active={state.bold} type="button" aria-label="Bold" aria-pressed={state.bold} title="Bold" disabled={unavailable} on:click={() => void execute({ type: "format.toggleBold" })}><WriterGlyph name="bold" /></button>
           <button class="command" class:active={state.italic} type="button" aria-label="Italic" aria-pressed={state.italic} title="Italic" disabled={unavailable} on:click={() => void execute({ type: "format.toggleItalic" })}><WriterGlyph name="italic" /></button>
           <button class="command" class:active={state.underline} type="button" aria-label="Underline" aria-pressed={state.underline} title="Underline" disabled={unavailable} on:click={() => void execute({ type: "format.toggleUnderline" })}><WriterGlyph name="underline" /></button>
@@ -181,6 +230,10 @@
   .group:last-child { border-right: 0; }
   .group > span { align-self: end; color: var(--ow-text-muted); font-size: 9.5px; line-height: 15px; text-align: center; white-space: nowrap; }
   .group-body { align-content: center; gap: 2px; }
+  .font-group { gap: 3px; }
+  .font-group select { height: 26px; padding: 0 22px 0 7px; border: 1px solid var(--ow-input-border); border-radius: 4px; background: var(--ow-input-bg); color: var(--ow-text); font-size: 11px; }
+  .font-group select:first-child { width: 142px; }
+  .font-group select.font-size { width: 60px; }
   .paragraph-grid { display: grid; grid-template-columns: repeat(6, 32px); align-content: center; }
   .command { min-width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0 6px; border-radius: 4px; }
   .command.large { width: 70px; height: 58px; flex-direction: column; gap: 3px; padding: 4px 5px 3px; font-size: 10px; line-height: 1.05; text-align: center; }
@@ -193,6 +246,9 @@
   .icon-button:hover:not(:disabled), .command:hover:not(:disabled), .tab-list button:hover { background: var(--ow-hover-bg); }
   .icon-button:disabled, .command:disabled, select:disabled { opacity: .4; cursor: default; }
   .icon-button:focus-visible, .command:focus-visible, .tab-list button:focus-visible, select:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--ow-accent); outline-offset: -2px; }
+  @media (max-width: 900px) {
+    .font-group select:first-child { width: 120px; }
+  }
   @media (max-width: 760px) {
     .tabs-row { grid-template-columns: auto minmax(0, 1fr); padding-right: 6px; }
     .document-name { display: none; }
@@ -200,6 +256,8 @@
     .panel { height: 78px; padding-inline: 5px; }
     .group { padding-inline: 6px; }
     .command.large { width: 62px; }
+    .font-group select:first-child { width: 108px; }
+    .font-group select.font-size { width: 54px; }
     .fields label { grid-template-columns: 56px 94px; }
     .fields select { width: 94px; }
     .current-style div { width: 120px; }
