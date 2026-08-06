@@ -40,6 +40,7 @@ export type WriterRequestMethod =
   | "document.open"
   | "document.save"
   | "document.snapshot"
+  | "document.exportPdf"
   | "command.execute";
 
 export interface WriterRequest {
