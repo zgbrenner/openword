@@ -147,6 +147,20 @@ function editPageRegion(kind) {
   dispatch(commandUrls[kind === "header" ? "header.edit" : "footer.edit"]);
 }
 
+function insertPageNumberField() {
+  if (!model || !controller) throw new Error("No Writer document is active");
+  const viewCursor = controller.getViewCursor();
+  const text = viewCursor.getText();
+  if (!text || typeof text.insertTextContent !== "function") {
+    throw new Error("The current Writer selection cannot contain a page-number field");
+  }
+  const field = model.createInstance("com.sun.star.text.TextField.PageNumber");
+  if (!field) throw new Error("Writer could not create a page-number field");
+  field.setPropertyValue("SubType", 1);
+  field.setPropertyValue("NumberingType", 4);
+  text.insertTextContent(viewCursor, field, false);
+}
+
 function emitFormatting() {
   postEvent("selection.formatting", { ...formatting });
   emitPageStyle();
@@ -276,6 +290,10 @@ function executeCommand(command) {
   }
   if (type === "footer.edit") {
     editPageRegion("footer");
+    return;
+  }
+  if (type === "field.insertPageNumber") {
+    insertPageNumberField();
     return;
   }
   const unoUrl = commandUrls[type];
