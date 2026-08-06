@@ -1,275 +1,349 @@
 <script lang="ts">
-  import { onMount, setContext } from "svelte";
+  import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { ask, save } from "@tauri-apps/plugin-dialog";
-  import { addRowAfter, addColumnAfter, deleteRow, deleteColumn, deleteTable } from "prosemirror-tables";
-  import Toolbar from "@/components/Toolbar.svelte";
-  import Ruler from "@/components/Ruler.svelte";
-  import PageCanvas from "@/components/PageCanvas.svelte";
-  import StatusBar from "@/components/StatusBar.svelte";
-  import FindReplace from "@/components/FindReplace.svelte";
-  import ReviewPanel from "@/components/ReviewPanel.svelte";
-  import { EditorController } from "@/lib/editorController.svelte";
-  import { ViewState } from "@/lib/viewState.svelte";
-  import { PaginationState } from "@/lib/paginationState.svelte";
-  import { ReviewPanelState } from "@/lib/reviewPanelState.svelte";
-  import { isTauri } from "@/lib/tauriEnv";
-  import { getAuthorName, setAuthorName } from "@/lib/authorIdentity";
+  import { ask, message } from "@tauri-apps/plugin-dialog";
+  import WriterCanvas from "@/components/WriterCanvas.svelte";
+  import WriterHomeBar from "@/components/WriterHomeBar.svelte";
+  import WriterStatusBar from "@/components/WriterStatusBar.svelte";
+  import { WriterClient } from "@/writer/client";
   import {
-    newDocument,
-    openDocumentDialog,
-    openDocumentAtPath,
-    saveDocumentAsDialog,
-    writeDocument,
-    writeRecoverySnapshot,
-    readRecoverySnapshot,
+    openWriterDocumentAtPath,
+    openWriterDocumentBytes,
+    openWriterDocumentDialog,
+    saveWriterDocument,
+    saveWriterDocumentAsDialog,
+    type WriterOpenResult,
+    type WriterSaveResult,
+  } from "@/writer/fileApi";
+  import type {
+    PackageCompatibilityReport,
+    PackagePreservationSnapshot,
+  } from "@/writer/packagePassthrough";
+  import {
     clearRecoverySnapshot,
-    notify,
-  } from "@/lib/fileApi";
+    readRecoverySnapshot,
+    writeRecoverySnapshot,
+  } from "@/writer/recovery";
+  import { WriterRuntimeHost } from "@/writer/runtimeHost";
+  import { WriterState } from "@/writer/state.svelte";
+  import { isTauri } from "@/lib/tauriEnv";
 
-  const pagination = new PaginationState();
-  const controller = new EditorController(newDocument(), (count) => (pagination.pageCount = count));
-  const view = new ViewState();
-  const reviewPanel = new ReviewPanelState();
-  setContext("editor", controller);
-  setContext("view", view);
-  setContext("pagination", pagination);
-  setContext("reviewPanel", reviewPanel);
-
-  let findOpen = $state(false);
-  let findWithReplace = $state(false);
+  const writerState = new WriterState();
+  let client = $state<WriterClient | null>(null);
+  let runtimeHost = $state<WriterRuntimeHost | null>(null);
+  let packagePreservation = null as PackagePreservationSnapshot | null;
+  let compatibilityReport = $state<PackageCompatibilityReport | null>(null);
+  let unsubscribeWriter: (() => void) | null = null;
+  let pendingOpenPath: string | null = null;
+  let documentInitialized = false;
+  let recoveryInFlight = false;
 
   $effect(() => {
-    const title = `${controller.dirty ? "● " : ""}${controller.fileName} — OpenWord`;
-    if (isTauri()) {
-      getCurrentWindow()
-        .setTitle(title)
-        .catch(() => {});
-    } else {
-      document.title = title;
-    }
+    const title = `${writerState.dirty ? "● " : ""}${writerState.fileName} — OpenWord`;
+    if (isTauri()) getCurrentWindow().setTitle(title).catch(() => {});
+    else document.title = title;
   });
 
-  async function doSave() {
-    if (controller.filePath) {
-      await writeDocument(controller.doc, controller.comments, controller.suggestionMeta, controller.filePath, controller.fileFormat);
-      controller.markDirty(false);
-      await clearRecoverySnapshot();
-    } else {
-      await doSaveAs();
+  function requireWriter(): { client: WriterClient; host: WriterRuntimeHost } | null {
+    if (!client || !runtimeHost || !writerState.ready) return null;
+    return { client, host: runtimeHost };
+  }
+
+  async function confirmDiscard(action: string): Promise<boolean> {
+    if (!writerState.dirty) return true;
+    return ask(`You have unsaved changes. Discard them and ${action}?`, { title: "OpenWord" });
+  }
+
+  function applyOpenResult(result: WriterOpenResult): void {
+    packagePreservation = result.preservation;
+    compatibilityReport = null;
+    writerState.setDocument(result.path, result.name, result.format);
+  }
+
+  async function clearRecoveryAfterDiscard(): Promise<void> {
+    if (isTauri()) await clearRecoverySnapshot().catch(() => {});
+  }
+
+  async function openAtPath(path: string): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) {
+      pendingOpenPath = path;
+      return;
+    }
+    if (!(await confirmDiscard("open another document"))) return;
+
+    try {
+      applyOpenResult(await openWriterDocumentAtPath(path, writer.client, writer.host));
+      await clearRecoveryAfterDiscard();
+    } catch (error) {
+      await showError("Could not open document", error);
     }
   }
 
-  async function doSaveAs() {
-    const result = await saveDocumentAsDialog(
-      controller.doc,
-      controller.comments,
-      controller.suggestionMeta,
-      controller.fileName.replace(/\.[^.]+$/, ""),
+  async function doOpen(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer || !(await confirmDiscard("open another document"))) return;
+    try {
+      const result = await openWriterDocumentDialog(writer.client, writer.host);
+      if (!result) return;
+      applyOpenResult(result);
+      await clearRecoveryAfterDiscard();
+    } catch (error) {
+      await showError("Could not open document", error);
+    }
+  }
+
+  async function doNew(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer || !(await confirmDiscard("start a new document"))) return;
+    try {
+      await writer.client.newDocument("docx");
+      packagePreservation = null;
+      compatibilityReport = null;
+      writerState.setDocument(null, "Document1.docx", "docx");
+      await clearRecoveryAfterDiscard();
+    } catch (error) {
+      await showError("Could not create document", error);
+    }
+  }
+
+  async function reportRetainedBackup(result: WriterSaveResult): Promise<void> {
+    if (!result.recoveryPath) return;
+    const detail = `The document was saved, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
+    if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
+    else console.warn(detail);
+  }
+
+  async function reportCompatibility(result: WriterSaveResult): Promise<void> {
+    packagePreservation = result.preservation;
+    compatibilityReport = result.compatibilityReport;
+    const report = result.compatibilityReport;
+    const lines: string[] = [];
+    if (report.droppedSignatures.length) {
+      lines.push(`${report.droppedSignatures.length} invalidated digital signature part(s) were removed.`);
+    }
+    if (report.blockedExecutables.length) {
+      lines.push(`${report.blockedExecutables.length} executable or macro payload(s) were quarantined.`);
+    }
+    if (report.notCarriedAcrossFormat.length) {
+      lines.push(`${report.notCarriedAcrossFormat.length} opaque part(s) could not be carried across formats.`);
+    }
+    lines.push(...report.warnings);
+    if (!lines.length) return;
+
+    const detail = lines.join("\n");
+    if (isTauri()) await message(detail, { title: "Document compatibility", kind: "warning" });
+    else console.warn(detail);
+  }
+
+  async function doSave(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) return;
+    if (!writerState.filePath) return doSaveAs();
+
+    try {
+      const result = await saveWriterDocument(
+        writerState.filePath,
+        writerState.format,
+        writer.client,
+        writer.host,
+        packagePreservation,
+      );
+      writerState.dirty = false;
+      await clearRecoveryAfterDiscard();
+      await reportRetainedBackup(result);
+      await reportCompatibility(result);
+    } catch (error) {
+      await showError("Could not save document", error);
+    }
+  }
+
+  async function doSaveAs(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) return;
+    const baseName = writerState.fileName.replace(/\.[^.]+$/, "") || "Document1";
+
+    try {
+      const result = await saveWriterDocumentAsDialog(
+        writer.client,
+        writer.host,
+        baseName,
+        packagePreservation,
+      );
+      if (!result) return;
+      writerState.setDocument(
+        result.path,
+        result.path.split(/[\\/]/).pop() ?? `${baseName}.${result.format}`,
+        result.format,
+      );
+      await clearRecoveryAfterDiscard();
+      await reportRetainedBackup(result);
+      await reportCompatibility(result);
+    } catch (error) {
+      await showError("Could not save document", error);
+    }
+  }
+
+  async function persistRecovery(): Promise<void> {
+    const writer = requireWriter();
+    if (!isTauri() || !writer || !writerState.dirty || recoveryInFlight) return;
+    recoveryInFlight = true;
+    try {
+      await writeRecoverySnapshot(writer.client, writer.host, {
+        fileName: writerState.fileName,
+        originalPath: writerState.filePath,
+        format: writerState.format,
+        preservation: packagePreservation,
+      });
+    } catch (error) {
+      console.error("Could not write OpenWord recovery snapshot", error);
+    } finally {
+      recoveryInFlight = false;
+    }
+  }
+
+  async function restoreRecoveryIfAvailable(
+    nextClient: WriterClient,
+    nextHost: WriterRuntimeHost,
+  ): Promise<boolean> {
+    if (!isTauri()) return false;
+    const snapshot = await readRecoverySnapshot().catch(() => null);
+    if (!snapshot) return false;
+
+    const restore = await ask(
+      `OpenWord found unsaved work from ${new Date(snapshot.metadata.createdAt).toLocaleString()}. Restore it?`,
+      { title: "Recover document" },
     );
-    if (!result) return;
-    controller.filePath = result.path;
-    controller.fileFormat = result.format;
-    controller.fileName = result.path.split(/[\\/]/).pop() ?? controller.fileName;
-    controller.markDirty(false);
-    await clearRecoverySnapshot();
-  }
-
-  async function doExportDocx() {
-    const path = await save({
-      defaultPath: `${controller.fileName.replace(/\.[^.]+$/, "")}.docx`,
-      filters: [{ name: "Word Document", extensions: ["docx"] }],
-    });
-    if (!path) return;
-    await writeDocument(controller.doc, controller.comments, controller.suggestionMeta, path, "docx");
-  }
-
-  async function doOpen() {
-    if (controller.dirty) {
-      const proceed = await ask("You have unsaved changes. Discard them and open another document?", {
-        title: "OpenWord",
-      });
-      if (!proceed) return;
+    if (!restore) {
+      await clearRecoverySnapshot().catch(() => {});
+      return false;
     }
-    const result = await openDocumentDialog();
-    if (!result) return;
-    applyOpenResult(result);
+
+    packagePreservation = await openWriterDocumentBytes(
+      snapshot.bytes,
+      snapshot.metadata.format,
+      nextClient,
+      nextHost,
+    );
+    compatibilityReport = null;
+    writerState.setDocument(
+      snapshot.metadata.originalPath,
+      snapshot.metadata.fileName,
+      snapshot.metadata.format,
+    );
+    writerState.dirty = true;
+    return true;
   }
 
-  function applyOpenResult(result: {
-    doc: any;
-    comments: any[];
-    suggestionMeta: Record<string, any>;
-    path: string;
-    format: "owdoc" | "docx";
-    name: string;
-  }) {
-    controller.loadDocument(result.doc, result.comments, result.suggestionMeta);
-    controller.filePath = result.path;
-    controller.fileFormat = result.format;
-    controller.fileName = result.name;
+  async function showError(title: string, error: unknown): Promise<void> {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (isTauri()) await message(detail, { title, kind: "error" });
+    else window.alert(`${title}\n\n${detail}`);
   }
 
-  async function doNew() {
-    if (controller.dirty) {
-      const proceed = await ask("You have unsaved changes. Discard them and start a new document?", {
-        title: "OpenWord",
-      });
-      if (!proceed) return;
+  async function unavailable(feature: string): Promise<void> {
+    const detail = `${feature} is not wired to the Writer engine in this foundation build yet.`;
+    if (isTauri()) await message(detail, { title: "OpenWord" });
+    else window.alert(detail);
+  }
+
+  async function execute(type:
+    | "format.toggleBold"
+    | "format.toggleItalic"
+    | "format.toggleUnderline"
+    | "history.undo"
+    | "history.redo"
+  ): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) return;
+    try {
+      await writer.client.execute({ type });
+      requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
+    } catch (error) {
+      await showError("Writer command failed", error);
     }
-    controller.loadDocument(newDocument());
-    controller.filePath = null;
-    controller.fileFormat = "owdoc";
-    controller.fileName = "Untitled document";
-    await clearRecoverySnapshot();
   }
 
-  function tableCommand(fn: (state: any, dispatch: any) => boolean) {
-    if (!controller.view) return;
-    fn(controller.view.state, controller.view.dispatch);
-    controller.focus();
-  }
-
-  async function handleMenuAction(id: string) {
+  async function handleMenuAction(id: string): Promise<void> {
     switch (id) {
       case "file_new": return doNew();
       case "file_open": return doOpen();
       case "file_save": return doSave();
       case "file_save_as": return doSaveAs();
-      case "file_export_docx": return doExportDocx();
-      case "file_print": return window.print();
+      case "file_export_docx": return unavailable("Export to DOCX");
+      case "file_print": return unavailable("Printing");
       case "file_close": return;
-
-      case "edit_undo": return controller.undo();
-      case "edit_redo": return controller.redo();
-      case "edit_find":
-        findWithReplace = false;
-        findOpen = true;
-        return;
-      case "edit_find_replace":
-        findWithReplace = true;
-        findOpen = true;
-        return;
-      case "edit_paste_without_formatting":
-        return document.execCommand?.("paste");
-
-      case "view_zoom_in": return view.zoomIn();
-      case "view_zoom_out": return view.zoomOut();
-      case "view_zoom_reset": return view.zoomReset();
-      case "view_toggle_ruler": return view.toggleRuler();
-
-      case "insert_image": {
-        const toolbar = document.querySelector<HTMLButtonElement>('[title="Insert image"]');
-        toolbar?.click();
-        return;
-      }
-      case "insert_table": {
-        const toolbar = document.querySelector<HTMLButtonElement>('[title="Insert table"]');
-        toolbar?.click();
-        return;
-      }
-      case "insert_link": {
-        const toolbar = document.querySelector<HTMLButtonElement>('[title="Insert link (Ctrl+K)"]');
-        toolbar?.click();
-        return;
-      }
-      case "insert_page_break": return controller.insertPageBreak();
-      case "insert_comment": {
-        const toolbar = document.querySelector<HTMLButtonElement>('[title="Insert comment (Ctrl+Alt+M)"]');
-        toolbar?.click();
-        return;
-      }
-
-      case "format_bold": return controller.toggleBold();
-      case "format_italic": return controller.toggleItalic();
-      case "format_underline": return controller.toggleUnderline();
-      case "format_strikethrough": return controller.toggleStrike();
-      case "format_align_left": return controller.setAlign("left");
-      case "format_align_center": return controller.setAlign("center");
-      case "format_align_right": return controller.setAlign("right");
-      case "format_align_justify": return controller.setAlign("justify");
-      case "format_bullet_list": return controller.toggleBulletList();
-      case "format_ordered_list": return controller.toggleOrderedList();
-      case "format_clear": return controller.clearFormatting();
-
-      case "tools_word_count": {
-        const wc = controller.snapshot.wordCount;
-        return notify("Word count", `Words: ${wc.words}\nCharacters: ${wc.characters}\nCharacters (no spaces): ${wc.charactersNoSpaces}\nPages: ${pagination.pageCount}`);
-      }
-      case "tools_spelling":
-        return notify("Spelling and grammar", "Spellcheck uses your OS's built-in checker (right-click a misspelled word). A dedicated grammar checker is a possible future add-on, kept out of the lightweight core.");
-      case "tools_track_changes":
-        return controller.toggleSuggesting();
-      case "tools_accept_all_changes":
-        return controller.acceptAllSuggestions();
-      case "tools_reject_all_changes":
-        return controller.rejectAllSuggestions();
-      case "tools_set_author_name": {
-        const name = window.prompt("Your name (used on comments and tracked changes):", getAuthorName());
-        if (name) setAuthorName(name);
-        return;
-      }
-
-      case "table_insert_row_below": return tableCommand(addRowAfter);
-      case "table_insert_column_right": return tableCommand(addColumnAfter);
-      case "table_delete_row": return tableCommand(deleteRow);
-      case "table_delete_column": return tableCommand(deleteColumn);
-      case "table_delete": return tableCommand(deleteTable);
-
-      case "help_shortcuts":
-        return notify(
-          "Keyboard shortcuts",
-          "Bold: Ctrl/Cmd+B  Italic: Ctrl/Cmd+I  Underline: Ctrl/Cmd+U\nUndo: Ctrl/Cmd+Z  Redo: Ctrl/Cmd+Shift+Z\nFind: Ctrl/Cmd+F  Replace: Ctrl/Cmd+H\nSave: Ctrl/Cmd+S  Print: Ctrl/Cmd+P\nBullet list: Ctrl/Cmd+Shift+8  Numbered list: Ctrl/Cmd+Shift+7",
-        );
+      case "edit_undo": return execute("history.undo");
+      case "edit_redo": return execute("history.redo");
+      case "format_bold": return execute("format.toggleBold");
+      case "format_italic": return execute("format.toggleItalic");
+      case "format_underline": return execute("format.toggleUnderline");
       case "help_about":
-        return notify("OpenWord", "OpenWord 0.1.0 — a free, open-source, lightweight word processor.\nApache-2.0 licensed.");
+        return isTauri()
+          ? message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" })
+          : undefined;
       default:
-        return;
+        return unavailable(id.replaceAll("_", " "));
+    }
+  }
+
+  async function handleWriterReady(nextClient: WriterClient, nextHost: WriterRuntimeHost): Promise<void> {
+    unsubscribeWriter?.();
+    client?.destroy();
+    runtimeHost?.destroy();
+    client = nextClient;
+    runtimeHost = nextHost;
+    unsubscribeWriter = nextClient.subscribe((event) => writerState.apply(event));
+    writerState.apply({ kind: "event", event: "engine.ready", payload: { version: "writer-lowa" } });
+
+    try {
+      if (pendingOpenPath) {
+        const path = pendingOpenPath;
+        pendingOpenPath = null;
+        applyOpenResult(await openWriterDocumentAtPath(path, nextClient, nextHost));
+      } else if (!documentInitialized) {
+        const restored = await restoreRecoveryIfAvailable(nextClient, nextHost);
+        if (!restored) {
+          await nextClient.newDocument("docx");
+          packagePreservation = null;
+          compatibilityReport = null;
+          writerState.setDocument(null, "Document1.docx", "docx");
+        }
+      }
+      documentInitialized = true;
+    } catch (error) {
+      writerState.setStartupFailure(error);
+      await showError("Writer initialization failed", error);
     }
   }
 
   onMount(() => {
-    // Outside the real Tauri shell (e.g. a plain-browser dev preview) none of
-    // the native menu/window/fs bridges exist — skip wiring them up rather
-    // than letting the IPC calls throw during startup.
     if (!isTauri()) return;
 
-    const unlistenMenu = listen<string>("menu:action", (e) => handleMenuAction(e.payload));
-    const unlistenOpen = listen<string[]>("file:open-path", async (e) => {
-      const path = e.payload[0];
-      if (!path) return;
-      const result = await openDocumentAtPath(path);
-      applyOpenResult(result);
+    const unlistenMenu = listen<string>("menu:action", (event) => void handleMenuAction(event.payload));
+    const unlistenOpen = listen<string[]>("file:open-path", (event) => {
+      const path = event.payload[0];
+      if (path) void openAtPath(path);
     });
-
-    (async () => {
-      const recovered = await readRecoverySnapshot().catch(() => null);
-      if (recovered) {
-        const restore = await ask("OpenWord found unsaved work from a previous session. Restore it?", {
-          title: "Recover document",
-        });
-        if (restore) {
-          controller.loadDocument(recovered.doc, recovered.comments, recovered.suggestionMeta);
-          controller.markDirty(true);
-        } else {
-          await clearRecoverySnapshot();
-        }
-      }
-    })();
-
-    const autosave = window.setInterval(() => {
-      if (controller.dirty) writeRecoverySnapshot(controller.doc, controller.comments, controller.suggestionMeta).catch(() => {});
-    }, 20000);
+    const autosave = window.setInterval(() => void persistRecovery(), 20_000);
 
     let unlistenClose: (() => void) | undefined;
     getCurrentWindow()
       .onCloseRequested(async (event) => {
-        if (!controller.dirty) return;
+        if (!writerState.dirty) return;
         event.preventDefault();
-        const discard = await ask("You have unsaved changes. Quit without saving?", { title: "OpenWord" });
+        await persistRecovery();
+        const discard = await ask(
+          "You have unsaved changes. Quit without saving? A recovery snapshot is available unless you choose to discard it.",
+          { title: "OpenWord" },
+        );
         if (discard) {
-          await clearRecoverySnapshot().catch(() => {});
+          const keepRecovery = await ask(
+            "Keep the recovery snapshot for the next launch?",
+            { title: "OpenWord recovery", kind: "warning" },
+          );
+          if (!keepRecovery) await clearRecoverySnapshot().catch(() => {});
           await getCurrentWindow().destroy();
         }
       })
@@ -280,33 +354,29 @@
       unlistenOpen.then((fn) => fn());
       unlistenClose?.();
       window.clearInterval(autosave);
+      unsubscribeWriter?.();
+      client?.destroy();
+      runtimeHost?.destroy();
     };
   });
 </script>
 
 <div class="ow-app">
-  <Toolbar />
-  <Ruler />
-  <div class="ow-canvas-area">
-    <div class="ow-canvas-main">
-      <PageCanvas />
-      <FindReplace bind:open={findOpen} bind:withReplace={findWithReplace} />
-    </div>
-    <ReviewPanel />
-  </div>
-  <StatusBar />
+  <WriterHomeBar {client} state={writerState} onsave={() => void doSave()} />
+  <main class="ow-writer-main">
+    <WriterCanvas
+      onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}
+      onfailure={(error) => writerState.setStartupFailure(error)}
+    />
+  </main>
+  <WriterStatusBar state={writerState} report={compatibilityReport} />
 </div>
 
 <style>
-  .ow-canvas-area {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-  }
-  .ow-canvas-main {
-    position: relative;
+  .ow-writer-main {
     flex: 1;
     display: flex;
     min-width: 0;
+    min-height: 0;
   }
 </style>

@@ -7,6 +7,15 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
+# Writer engine source/build workspace and generated runtime artifacts
+.engine-work/
+public/writer-runtime/*
+!public/writer-runtime/.gitkeep
+!public/writer-runtime/openword_writer_commands.js
+!public/writer-runtime/openword_writer_page_styles.js
+!public/writer-runtime/openword_writer_thread.js
+engine/runtime.lock.json.tmp
+
 # Editor / OS
 .vscode/*
 !.vscode/extensions.json

@@ -2,14 +2,20 @@
   "name": "openword",
   "private": true,
   "version": "0.1.0",
-  "description": "A free, open-source, genuinely lightweight word processor.",
+  "description": "A local-first, open-source word processor built on one LibreOffice Writer engine.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
+    "build:desktop": "npm run engine:verify && npm run test:writer && npm run build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:writer": "node --test tests/writer/*.test.mjs",
+    "engine:lock": "node engine/scripts/resolve-runtime.mjs",
+    "engine:prepare": "node engine/scripts/prepare-sources.mjs",
+    "engine:build": "bash engine/scripts/build-runtime.sh",
+    "engine:verify": "node engine/scripts/verify-runtime.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -1,92 +1,131 @@
 # OpenWord
 
-A free, open-source word processor for people who feel stuck picking
-between Google Docs and Microsoft Word.
+OpenWord is a local-first, open-source word processor built around one document engine: **LibreOffice Writer**.
 
-The one non-negotiable: **the baseline app is genuinely lightweight** — fast
-to launch, small on disk, no bundled cruft — while still covering everything
-you expect from a real word processor: bold/italic/underline, fonts and
-styles, headings, lists, tables, images, real reflowed page-based layout,
-comments, track changes ("suggesting" mode with accept/reject), find &
-replace, format painter, and Word (`.docx`) compatibility — including
-comments and tracked changes round-tripping through real OOXML, not just
-OpenWord's own format. It looks and works like the word processors you
-already know — this isn't a redesign exercise.
+LibreOffice supplies the document model, line layout, pagination, ODT support, Microsoft Word filters, page styles, headers and footers, fields, tables, notes, review data, and print layout. OpenWord replaces the surrounding interface with a cleaner Microsoft Word-style desktop experience built with Tauri and Svelte.
 
-Anything heavier — AI writing assistance, cloud storage sync, real-time
-collaboration — is an opt-in add-on, never baked into the core. See
-[ARCHITECTURE.md](./ARCHITECTURE.md) for the full reasoning and the research
-that informed these choices.
+OpenWord does not execute document macros or load arbitrary UNO extensions. The baseline editor requires no account, cloud service, CDN, or document server.
 
-## Status
+## Current status
 
-Early baseline under active development. Core editing, the Word-familiar UI
-shell, reflowed pagination, comments, track changes, and `.docx` import/
-export (including comments and tracked changes) are all in place; see
-`ARCHITECTURE.md`'s "roadmap" notes for known gaps (line-level pagination
-splitting, headers/footers, unmodeled-XML passthrough, ODT support).
+The repository is undergoing an engine transition from its original ProseMirror prototype to a Writer-only architecture.
 
-## Tech stack
+Implemented on the Writer foundation branch:
 
-- [Tauri 2](https://tauri.app/) (Rust) — native shell, ~30-40MB idle RAM vs.
-  Electron's 100MB+, because it drives the OS's own webview instead of
-  bundling a browser.
-- [Svelte](https://svelte.dev/) + TypeScript + [Vite](https://vitejs.dev/) —
-  frontend, chosen for near-zero runtime overhead.
-- [ProseMirror](https://prosemirror.net/) — the editing engine, the same
-  proven foundation more ambitious projects like SuperDoc build on.
-- Apache-2.0 licensed.
+- A local threaded LibreOffice WebAssembly host using LOWA and zetajs
+- A typed semantic command and state bridge instead of scattered raw UNO calls
+- Writer-native line-level pagination and page layout
+- DOCX and ODT open, save, Save As, autosave, and generation-safe recovery plumbing
+- Header and footer enablement, current-region editing, Different First Page, and Different Odd & Even behavior through Writer page styles
+- Bold, italic, underline, paragraph alignment, bullets, numbering, undo, redo, and page breaks
+- Conservative package passthrough for opaque DOCX and ODT ZIP parts
+- DOCX relationship/content-type and ODT manifest repair for restored or removed parts
+- Compatibility reporting for restored data, Writer conflicts, invalidated signatures, blocked executable payloads, and cross-format omissions
+- One-way migration of legacy `.owdoc` files into Writer, requiring Save As to DOCX or ODT
+- A restrained Svelte shell and status UI
 
-## Getting started
+Still incomplete:
 
-Prerequisites: [Node.js](https://nodejs.org/) 18+, [Rust](https://rustup.rs/),
-and Tauri's platform build dependencies (see the
-[Tauri prerequisites guide](https://tauri.app/start/prerequisites/) — on
-Linux this means `webkit2gtk`, `libappindicator3`, `librsvg2`, and friends).
+- The large Writer WASM runtime has not been committed to Git. It must be built from the pinned source lock on a suitable machine.
+- Full end-to-end desktop compilation and runtime testing remain required after installing that runtime.
+- Unknown foreign elements embedded inside Writer-owned XML are not yet fully preserved. The current passthrough layer preserves opaque package parts and repairs package metadata; deeper filter-level interoperability work remains.
+- The Word-style ribbon, navigation pane, review interface, references, mail merge, print integration, accessibility validation, and full fidelity corpus remain under development.
+
+This branch should not be described as release-ready until the pinned Writer runtime builds, the desktop application compiles, and the fidelity fixtures pass.
+
+## Architecture
+
+```text
+OpenWord
+├── Tauri native shell
+├── Svelte Microsoft Word-style interface
+├── Typed OpenWord Writer bridge
+└── LibreOffice Writer
+    ├── document model
+    ├── line layout and pagination
+    ├── ODF and OOXML filters
+    ├── page styles and headers/footers
+    └── local LOWA/zetajs WebAssembly host
+```
+
+There is no second editing engine. The original ProseMirror code remains temporarily only for the quarantined one-way `.owdoc` migration importer and will be reduced further after migration fixtures are complete.
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) and the approved design in [`docs/superpowers/specs/2026-08-04-single-writer-engine-design.md`](./docs/superpowers/specs/2026-08-04-single-writer-engine-design.md).
+
+## Runtime requirements
+
+The Writer runtime is generated from exact source revisions recorded in:
+
+- `engine/manifest.json`
+- `engine/runtime.lock.json`
+
+The reproducible build currently targets Linux x86_64. LibreOffice WebAssembly linking requires a high-memory builder; the repository wrapper enforces a 64 GiB-class host rather than failing late during the link.
 
 ```bash
 npm install
-npm run tauri dev    # launches the desktop app with hot reload
+npm run engine:build
+npm run engine:verify
 ```
 
-Frontend-only development (no Rust/Tauri required, useful for fast UI
-iteration — Tauri-specific features like native menus and file dialogs are
-feature-detected and simply no-op outside the Tauri shell):
+The generated runtime is installed under `public/writer-runtime/` and is intentionally ignored by Git. Runtime verification checks source provenance, byte sizes, and SHA-256 hashes before desktop packaging.
+
+See [`engine/README.md`](./engine/README.md) for the complete build contract.
+
+## Development
+
+Prerequisites for the application shell:
+
+- Node.js
+- Rust
+- Tauri platform dependencies
+- A verified local Writer runtime
 
 ```bash
-npm run dev           # Vite dev server at http://localhost:1420
+npm install
+npm run test:writer
+npm run check
+cd src-tauri && cargo check
+npm run tauri dev
 ```
 
-Checks:
-
-```bash
-npm run check          # svelte-check (TypeScript + Svelte)
-cd src-tauri && cargo check   # Rust
-```
-
-Build a release bundle for your platform:
+Desktop packaging is deliberately gated:
 
 ```bash
 npm run tauri build
 ```
 
+Before Tauri builds, OpenWord verifies the Writer runtime provenance, runs Writer contract tests, and compiles the Svelte application.
+
 ## Project layout
 
-```
-src/                 # frontend — the whole editing UI (Svelte + TS)
-  editor/             # ProseMirror schema, commands, keymap, pagination,
-                       # comments, track changes
-  components/         # Toolbar, Ruler, PageCanvas, StatusBar, FindReplace,
-                       # ReviewPanel (comments + track changes)
-  docx/               # .docx import/export
-  lib/                # editor controller, file I/O, view state
-src-tauri/            # Rust shell — native menu, file I/O, window
-plugins/              # NOT built by default — future opt-in modules
+```text
+engine/                         pinned Writer toolchain, scripts, notices
+public/writer-runtime/          generated LOWA assets + committed bridge policy
+src/writer/                     typed bridge, state, file, recovery, fidelity layers
+src/components/                 OpenWord interface around the Writer canvas
+src/editor/ and src/docx/       legacy migration-only code during transition
+src-tauri/                      native shell, menus, associations, permissions
+tests/writer/                   bridge, page-style, migration, and fidelity contracts
+docs/superpowers/               approved design and implementation plans
 ```
 
-## Contributing
+## Security boundary
 
-Issues and pull requests welcome. If you're picking a first task, the
-"roadmap" callouts in `ARCHITECTURE.md` (line-level pagination splitting,
-unmodeled-XML passthrough for full OOXML fidelity, headers/footers, ODT
-support) are good places to start.
+- No remote Writer runtime or CDN assets
+- No proxy POSIX sockets or runtime network transport
+- No macro execution
+- No arbitrary UNO extension loading
+- External document resources are not fetched automatically
+- Invalidated signatures are removed from rewritten packages
+- Executable package payloads are quarantined
+- Saves use staged files and rollback backups
+- Recovery snapshots use generation-stamped documents and atomic pointer replacement
+
+## Licensing
+
+- OpenWord-authored shell, bridge, and interface code: Apache License 2.0
+- zetajs: MIT License
+- LibreOffice Writer and covered modifications: applicable LibreOffice and MPL 2.0 terms
+- Bundled toolchain, fonts, dictionaries, and libraries: their respective upstream licenses
+
+OpenWord branding does not imply endorsement by The Document Foundation, LibreOffice, Allotropia, or Microsoft.

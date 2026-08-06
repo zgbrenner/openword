@@ -2,16 +2,23 @@ mod menu;
 
 use tauri::{Emitter, Manager};
 
+fn is_supported_document_path(path: &str) -> bool {
+    matches!(
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("docx" | "odt" | "owdoc")
+    )
+}
+
 /// Files passed on the command line (double-click / "Open with" on
 /// Windows and Linux) arrive as argv, not as a native "open file" event.
-/// Extract anything that looks like a document path.
 fn extract_doc_paths(argv: &[String]) -> Vec<String> {
     argv.iter()
         .skip(1)
-        .filter(|arg| {
-            let lower = arg.to_lowercase();
-            lower.ends_with(".docx") || lower.ends_with(".owdoc")
-        })
+        .filter(|argument| is_supported_document_path(argument))
         .cloned()
         .collect()
 }
@@ -30,9 +37,6 @@ fn emit_open_paths(app: &tauri::AppHandle, paths: Vec<String>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // A second launch (e.g. double-clicking another .docx while
-            // OpenWord is already running) hands its args to the running
-            // instance instead of opening a second window.
             let paths = extract_doc_paths(&argv);
             emit_open_paths(app, paths);
         }))
@@ -42,7 +46,6 @@ pub fn run() {
             let menu = menu::build(app.handle())?;
             app.set_menu(menu)?;
 
-            // Linux/Windows cold start with a file argument.
             let argv: Vec<String> = std::env::args().collect();
             let paths = extract_doc_paths(&argv);
             if !paths.is_empty() {
@@ -57,15 +60,45 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building the OpenWord application")
         .run(|_app_handle, _event| {
-            // macOS/iOS deliver "open with" as a native run event instead of argv.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = _event {
                 let paths: Vec<String> = urls
                     .into_iter()
                     .filter_map(|url: tauri::Url| url.to_file_path().ok())
-                    .map(|p: std::path::PathBuf| p.to_string_lossy().to_string())
+                    .map(|path: std::path::PathBuf| path.to_string_lossy().to_string())
+                    .filter(|path| is_supported_document_path(path))
                     .collect();
                 emit_open_paths(_app_handle, paths);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_doc_paths, is_supported_document_path};
+
+    #[test]
+    fn recognizes_writer_documents_case_insensitively() {
+        assert!(is_supported_document_path("Report.DOCX"));
+        assert!(is_supported_document_path("notes.odt"));
+        assert!(is_supported_document_path("legacy.owdoc"));
+    }
+
+    #[test]
+    fn rejects_unverified_formats() {
+        assert!(!is_supported_document_path("report.pdf"));
+        assert!(!is_supported_document_path("README"));
+        assert!(!is_supported_document_path("draft.rtf"));
+    }
+
+    #[test]
+    fn extracts_only_document_arguments() {
+        let argv = vec![
+            "openword".to_string(),
+            "one.docx".to_string(),
+            "two.odt".to_string(),
+            "ignored.pdf".to_string(),
+        ];
+        assert_eq!(extract_doc_paths(&argv), vec!["one.docx", "two.odt"]);
+    }
 }

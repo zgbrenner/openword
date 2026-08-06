@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 2,
+  "sources": {
+    "libreoffice": {
+      "repository": "https://github.com/LibreOffice/core.git",
+      "ref": "refs/heads/distro/allotropia/zeta-24-2"
+    },
+    "zetajs": {
+      "repository": "https://github.com/allotropia/zetajs.git",
+      "ref": "refs/tags/v1.2.0"
+    },
+    "emsdk": {
+      "repository": "https://github.com/emscripten-core/emsdk.git",
+      "ref": "refs/tags/3.1.65"
+    },
+    "emscripten": {
+      "repository": "https://github.com/allotropia/emscripten.git",
+      "ref": "refs/heads/fixed-3.1.65"
+    },
+    "qt5": {
+      "repository": "https://github.com/allotropia/qt5.git",
+      "ref": "refs/heads/5.15.2+wasm"
+    },
+    "qtbase": {
+      "repository": "https://github.com/allotropia/qtbase.git",
+      "ref": "refs/heads/5.15.2+wasm"
+    }
+  },
+  "build": {
+    "host": "linux-x86_64",
+    "emscriptenVersion": "3.1.65",
+    "minimumMemoryGiB": 64,
+    "libreOfficeDistro": "LibreOfficeWASM32",
+    "networkEnabled": false
+  },
+  "runtimeDirectory": "public/writer-runtime",
+  "runtimeFiles": [
+    "soffice.js",
+    "soffice.wasm",
+    "soffice.data",
+    "soffice.data.js.metadata",
+    "zeta.js",
+    "openword_writer_commands.js",
+    "openword_writer_page_styles.js",
+    "openword_writer_thread.js"
+  ],
+  "optionalRuntimeFiles": [
+    "soffice.worker.js"
+  ],
+  "security": {
+    "allowNetwork": false,
+    "allowMacros": false,
+    "allowExtensions": false,
+    "allowProxySockets": false
+  }
+}

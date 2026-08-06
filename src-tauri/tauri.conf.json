@@ -5,7 +5,7 @@
   "identifier": "org.openword.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:desktop",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -22,7 +22,13 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost"
+      "headers": {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "X-Content-Type-Options": "nosniff"
+      },
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {
@@ -38,14 +44,20 @@
     "fileAssociations": [
       {
         "ext": ["owdoc"],
-        "name": "OpenWord Document",
-        "description": "OpenWord native document",
+        "name": "Legacy OpenWord Document",
+        "description": "Legacy OpenWord document for migration",
         "role": "Editor"
       },
       {
         "ext": ["docx"],
         "name": "Word Document",
         "description": "Microsoft Word document",
+        "role": "Editor"
+      },
+      {
+        "ext": ["odt"],
+        "name": "OpenDocument Text",
+        "description": "OpenDocument text document",
         "role": "Editor"
       }
     ]

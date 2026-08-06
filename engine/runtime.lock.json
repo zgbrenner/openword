@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "resolvedAt": "2026-08-05T06:30:00Z",
+  "sources": {
+    "libreoffice": {
+      "repository": "https://github.com/LibreOffice/core.git",
+      "ref": "refs/heads/distro/allotropia/zeta-24-2",
+      "commit": "dced3bc711d18407a2cc2400eb46e8261b663d95"
+    },
+    "zetajs": {
+      "repository": "https://github.com/allotropia/zetajs.git",
+      "ref": "refs/tags/v1.2.0",
+      "commit": "57360bcb0e7726ffa0e66567c8041261b959f8dd"
+    },
+    "emsdk": {
+      "repository": "https://github.com/emscripten-core/emsdk.git",
+      "ref": "refs/tags/3.1.65",
+      "commit": "3eb3e02dfd10eaa527ba61b89cfcfba13d1c060d"
+    },
+    "emscripten": {
+      "repository": "https://github.com/allotropia/emscripten.git",
+      "ref": "refs/heads/fixed-3.1.65",
+      "commit": "949ee1d40467b80e90a9fdc67155d443426fef2d"
+    },
+    "qt5": {
+      "repository": "https://github.com/allotropia/qt5.git",
+      "ref": "refs/heads/5.15.2+wasm",
+      "commit": "3d440b7787f9b5ba15e5f8bcd7aef39b388f94fa"
+    },
+    "qtbase": {
+      "repository": "https://github.com/allotropia/qtbase.git",
+      "ref": "refs/heads/5.15.2+wasm",
+      "commit": "a320678c85ec8029d5394bcd673d4c208af1de3a"
+    }
+  }
+}
