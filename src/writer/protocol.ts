@@ -16,6 +16,7 @@ export type WriterCommand =
   | { type: "list.toggleBullets" }
   | { type: "list.toggleNumbering" }
   | { type: "insert.pageBreak" }
+  | { type: "field.insertPageNumber" }
   | { type: "header.edit" }
   | { type: "footer.edit" }
   | { type: "header.setEnabled"; enabled: boolean }
