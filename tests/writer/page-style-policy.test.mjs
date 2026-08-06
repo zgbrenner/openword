@@ -60,6 +60,7 @@ test("reads page-style state using Word-facing semantics", () => {
       differentOddEven: true,
       orientation: "portrait",
       marginPreset: "normal",
+      paperSize: "letter",
     },
   );
 });
