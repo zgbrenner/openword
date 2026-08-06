@@ -8,6 +8,12 @@ const OPENWORD_MARGIN_PRESETS = Object.freeze({
   wide: Object.freeze({ left: 5080, right: 5080, top: 2540, bottom: 2540 }),
 });
 
+const OPENWORD_PAPER_SIZES = Object.freeze({
+  letter: Object.freeze({ width: 21590, height: 27940 }),
+  a4: Object.freeze({ width: 21000, height: 29700 }),
+  legal: Object.freeze({ width: 21590, height: 35560 }),
+});
+
 function finitePageNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : null;
@@ -29,6 +35,24 @@ function marginPresetFrom(readProperty) {
       Math.abs(actual.right - preset.right) <= tolerance &&
       Math.abs(actual.top - preset.top) <= tolerance &&
       Math.abs(actual.bottom - preset.bottom) <= tolerance
+    ) {
+      return name;
+    }
+  }
+  return "custom";
+}
+
+function paperSizeFrom(readProperty) {
+  const width = finitePageNumber(readProperty("Width"));
+  const height = finitePageNumber(readProperty("Height"));
+  if (width === null || height === null) return "custom";
+  const shortSide = Math.min(width, height);
+  const longSide = Math.max(width, height);
+  const tolerance = 20;
+  for (const [name, size] of Object.entries(OPENWORD_PAPER_SIZES)) {
+    if (
+      Math.abs(shortSide - size.width) <= tolerance &&
+      Math.abs(longSide - size.height) <= tolerance
     ) {
       return name;
     }
@@ -94,6 +118,24 @@ var OPENWORD_WRITER_PAGE_STYLES = Object.freeze({
         return updates;
       }
 
+      case "pageStyle.setPaperSize": {
+        const size = OPENWORD_PAPER_SIZES[command.paperSize];
+        if (!size) throw new Error(`Unsupported paper size: ${String(command.paperSize)}`);
+        const currentWidth = finitePageNumber(readProperty("Width"));
+        const currentHeight = finitePageNumber(readProperty("Height"));
+        const landscape = Boolean(readProperty("IsLandscape")) ||
+          (currentWidth !== null && currentHeight !== null && currentWidth > currentHeight);
+        return landscape
+          ? [
+              { property: "Width", value: size.height },
+              { property: "Height", value: size.width },
+            ]
+          : [
+              { property: "Width", value: size.width },
+              { property: "Height", value: size.height },
+            ];
+      }
+
       default:
         throw new Error(`Unsupported page-style command: ${String(type)}`);
     }
@@ -117,6 +159,7 @@ var OPENWORD_WRITER_PAGE_STYLES = Object.freeze({
       differentOddEven: !headerShared || !footerShared,
       orientation,
       marginPreset: marginPresetFrom(readProperty),
+      paperSize: paperSizeFrom(readProperty),
     };
   },
 });
