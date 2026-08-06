@@ -280,9 +280,10 @@
       case "format_italic": return execute("format.toggleItalic");
       case "format_underline": return execute("format.toggleUnderline");
       case "help_about":
-        return isTauri()
-          ? message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" })
-          : undefined;
+        if (isTauri()) {
+          await message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" });
+        }
+        return;
       default:
         return unavailable(id.replaceAll("_", " "));
     }
