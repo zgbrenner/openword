@@ -362,7 +362,12 @@
 </script>
 
 <div class="ow-app">
-  <WriterHomeBar {client} state={writerState} onsave={() => void doSave()} />
+  <WriterHomeBar
+    {client}
+    state={writerState}
+    onsave={() => void doSave()}
+    onerror={(error) => void showError("Writer command failed", error)}
+  />
   <main class="ow-writer-main">
     <WriterCanvas
       onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}
