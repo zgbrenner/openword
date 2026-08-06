@@ -162,6 +162,49 @@ function insertPageNumberField() {
   text.insertTextContent(viewCursor, field, false);
 }
 
+function readTextFormatting() {
+  if (!controller) return { fontFamily: "", fontSize: null };
+  try {
+    const viewCursor = controller.getViewCursor();
+    const rawFontFamily = viewCursor.getPropertyValue("CharFontName");
+    const rawFontSize = Number(viewCursor.getPropertyValue("CharHeight"));
+    return {
+      fontFamily: typeof rawFontFamily === "string" ? rawFontFamily : "",
+      fontSize: Number.isFinite(rawFontSize) && rawFontSize > 0 ? rawFontSize : null,
+    };
+  } catch {
+    return { fontFamily: "", fontSize: null };
+  }
+}
+
+function setFontFamily(fontFamily) {
+  if (!controller || typeof fontFamily !== "string") {
+    throw new Error("A font family name is required");
+  }
+  const value = fontFamily.trim();
+  if (!value || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("The selected font family is invalid");
+  }
+  const viewCursor = controller.getViewCursor();
+  viewCursor.setPropertyValue("CharFontName", value);
+  viewCursor.setPropertyValue("CharFontNameAsian", value);
+  viewCursor.setPropertyValue("CharFontNameComplex", value);
+  emitFormatting();
+}
+
+function setFontSize(fontSize) {
+  if (!controller) throw new Error("No Writer document is active");
+  const value = Number(fontSize);
+  if (!Number.isFinite(value) || value < 1 || value > 300) {
+    throw new Error("Font size must be between 1 and 300 points");
+  }
+  const viewCursor = controller.getViewCursor();
+  viewCursor.setPropertyValue("CharHeight", value);
+  viewCursor.setPropertyValue("CharHeightAsian", value);
+  viewCursor.setPropertyValue("CharHeightComplex", value);
+  emitFormatting();
+}
+
 function emitDocumentStatistics() {
   postEvent("document.statistics", { ...documentStatistics });
 }
@@ -180,7 +223,7 @@ function addDocumentStatisticsStatus() {
 }
 
 function emitFormatting() {
-  postEvent("selection.formatting", { ...formatting });
+  postEvent("selection.formatting", { ...formatting, ...readTextFormatting() });
   emitPageStyle();
 }
 
@@ -222,6 +265,7 @@ function attachDocumentListeners() {
   addListStatus("DefaultBullet", "bullets");
   addListStatus("DefaultNumbering", "numbering");
   addDocumentStatisticsStatus();
+  emitFormatting();
 
   if (model && typeof model.addModifyListener === "function") {
     modifyListener = zetajs.unoObject([css.util.XModifyListener], {
@@ -328,6 +372,14 @@ function executeCommand(command) {
   }
   if (type === "field.insertPageNumber") {
     insertPageNumberField();
+    return;
+  }
+  if (type === "format.setFontFamily") {
+    setFontFamily(command.fontFamily);
+    return;
+  }
+  if (type === "format.setFontSize") {
+    setFontSize(command.fontSize);
     return;
   }
   const unoUrl = commandUrls[type];
