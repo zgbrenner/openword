@@ -8,6 +8,7 @@
   import WriterStatusBar from "@/components/WriterStatusBar.svelte";
   import { WriterClient } from "@/writer/client";
   import {
+    exportWriterPdfDialog,
     openWriterDocumentAtPath,
     openWriterDocumentBytes,
     openWriterDocumentDialog,
@@ -108,7 +109,7 @@
     }
   }
 
-  async function reportRetainedBackup(result: WriterSaveResult): Promise<void> {
+  async function reportRetainedBackup(result: { recoveryPath: string | null }): Promise<void> {
     if (!result.recoveryPath) return;
     const detail = `The document was saved, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
     if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
@@ -182,6 +183,19 @@
       await reportCompatibility(result);
     } catch (error) {
       await showError("Could not save document", error);
+    }
+  }
+
+  async function doExportPdf(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) return;
+    const baseName = writerState.fileName.replace(/\.[^.]+$/, "") || "Document1";
+    try {
+      const result = await exportWriterPdfDialog(writer.client, writer.host, baseName);
+      if (!result) return;
+      await reportRetainedBackup(result);
+    } catch (error) {
+      await showError("Could not export PDF", error);
     }
   }
 
@@ -271,7 +285,7 @@
       case "file_open": return doOpen();
       case "file_save": return doSave();
       case "file_save_as": return doSaveAs();
-      case "file_export_docx": return unavailable("Export to DOCX");
+      case "file_export_pdf": return doExportPdf();
       case "file_print": return unavailable("Printing");
       case "file_close": return;
       case "edit_undo": return execute("history.undo");
