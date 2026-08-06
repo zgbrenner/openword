@@ -306,6 +306,16 @@ function writeDocument(path, format, markClean) {
   }
 }
 
+function exportPdf(path) {
+  if (!model) throw new Error("No Writer document is active");
+  assertVirtualFileUrl(path);
+  const properties = [
+    new css.beans.PropertyValue({ Name: "FilterName", Value: "writer_pdf_Export" }),
+    new css.beans.PropertyValue({ Name: "Overwrite", Value: true }),
+  ];
+  model.storeToURL(path, properties);
+}
+
 function executeCommand(command) {
   const type = command && command.type;
   if (type === "header.edit") {
@@ -354,6 +364,10 @@ function bindRequests() {
           writeDocument(request.params?.path, request.params?.format, false);
           respond(request.id);
           return;
+        case "document.exportPdf":
+          exportPdf(request.params?.path);
+          respond(request.id);
+          return;
         case "command.execute":
           executeCommand(request.params?.command);
           respond(request.id);
@@ -364,7 +378,9 @@ function bindRequests() {
     } catch (error) {
       const code = request.method === "document.open"
         ? "OPEN_FAILED"
-        : request.method === "document.save" || request.method === "document.snapshot"
+        : request.method === "document.save" ||
+            request.method === "document.snapshot" ||
+            request.method === "document.exportPdf"
           ? "SAVE_FAILED"
           : request.method === "command.execute"
             ? "COMMAND_FAILED"
