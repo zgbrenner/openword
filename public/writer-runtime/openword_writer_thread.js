@@ -240,6 +240,7 @@ function activateModel(nextModel) {
 
 function newDocument() {
   activateModel(desktop.loadComponentFromURL("private:factory/swriter", "_default", 0, []));
+  applyPageStyleCommand({ type: "pageStyle.setPaperSize", paperSize: "letter" });
   applyPageStyleCommand({ type: "pageStyle.setOrientation", orientation: "portrait" });
   applyPageStyleCommand({ type: "pageStyle.setMargins", preset: "normal" });
   if (model && typeof model.setModified === "function") model.setModified(false);
