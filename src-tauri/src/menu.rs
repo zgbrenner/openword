@@ -39,7 +39,7 @@ pub fn build<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
         .separator()
         .item(&item("file_save", "Save", Some("CmdOrCtrl+S"))?)
         .item(&item("file_save_as", "Save As...", Some("CmdOrCtrl+Shift+S"))?)
-        .item(&item("file_export_docx", "Export as .docx...", None)?)
+        .item(&item("file_export_pdf", "Export as PDF...", None)?)
         .separator()
         .item(&item("file_print", "Print...", Some("CmdOrCtrl+P"))?)
         .separator()
