@@ -11,6 +11,7 @@ let modifyListener = null;
 const statusListeners = [];
 const formatting = { bold: false, italic: false, underline: false };
 const paragraph = { alignment: "left", bullets: false, numbering: false };
+const documentStatistics = { pageLabel: "", pageTooltip: "", wordCountLabel: "" };
 
 const commandUrls = OPENWORD_WRITER_COMMANDS;
 
@@ -161,6 +162,23 @@ function insertPageNumberField() {
   text.insertTextContent(viewCursor, field, false);
 }
 
+function emitDocumentStatistics() {
+  postEvent("document.statistics", { ...documentStatistics });
+}
+
+function addDocumentStatisticsStatus() {
+  addStatusListener("StateWordCount", (value) => {
+    documentStatistics.wordCountLabel = typeof value === "string" ? value : "";
+    emitDocumentStatistics();
+  });
+  addStatusListener("StatePageNumber", (value) => {
+    const labels = Array.isArray(value) ? value : [];
+    documentStatistics.pageLabel = typeof labels[0] === "string" ? labels[0] : "";
+    documentStatistics.pageTooltip = typeof labels[1] === "string" ? labels[1] : "";
+    emitDocumentStatistics();
+  });
+}
+
 function emitFormatting() {
   postEvent("selection.formatting", { ...formatting });
   emitPageStyle();
@@ -203,6 +221,7 @@ function attachDocumentListeners() {
   addParagraphStatus("JustifyPara", "justify");
   addListStatus("DefaultBullet", "bullets");
   addListStatus("DefaultNumbering", "numbering");
+  addDocumentStatisticsStatus();
 
   if (model && typeof model.addModifyListener === "function") {
     modifyListener = zetajs.unoObject([css.util.XModifyListener], {
@@ -232,6 +251,10 @@ function activateModel(nextModel) {
   if (!nextModel) throw new Error("Writer did not return a document model");
   model = nextModel;
   controller = model.getCurrentController();
+  documentStatistics.pageLabel = "";
+  documentStatistics.pageTooltip = "";
+  documentStatistics.wordCountLabel = "";
+  emitDocumentStatistics();
   hideDocumentChrome();
   attachDocumentListeners();
   emitPageStyle();
