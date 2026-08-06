@@ -88,7 +88,7 @@ test("protocol worker state and ribbon expose page layout controls", () => {
   assert.match(protocol, /pageStyle\.setMargins/);
   assert.match(protocol, /orientation: PageOrientation/);
   assert.match(protocol, /marginPreset: PageMarginPreset/);
-  assert.match(worker, /OPENWORD_WRITER_PAGE_STYLES\.updatesFor\(command, \(property\)/);
+  assert.match(worker, /OPENWORD_WRITER_PAGE_STYLES\.updatesFor\(\s*command,\s*\(property\)/);
   assert.match(state, /orientation = \$state<PageOrientation>/);
   assert.match(state, /marginPreset = \$state<PageMarginPreset>/);
   assert.match(ribbon, /aria-label="Orientation"/);
