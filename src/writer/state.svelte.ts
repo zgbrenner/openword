@@ -1,6 +1,7 @@
 import type {
   PageMarginPreset,
   PageOrientation,
+  PagePaperSize,
   ParagraphAlignment,
   WriterError,
   WriterEvent,
@@ -26,6 +27,7 @@ export class WriterState {
   differentOddEven = $state(false);
   orientation = $state<PageOrientation>("portrait");
   marginPreset = $state<PageMarginPreset>("normal");
+  paperSize = $state<PagePaperSize>("letter");
   fileName = $state("Document1.docx");
   filePath = $state<string | null>(null);
   format = $state<WriterFormat>("docx");
@@ -58,6 +60,7 @@ export class WriterState {
         this.differentOddEven = event.payload.differentOddEven;
         this.orientation = event.payload.orientation;
         this.marginPreset = event.payload.marginPreset;
+        this.paperSize = event.payload.paperSize;
         break;
       case "engine.failure":
         this.ready = false;
