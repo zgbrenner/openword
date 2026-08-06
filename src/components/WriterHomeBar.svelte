@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { WriterClient } from "@/writer/client";
-  import type { WriterCommand } from "@/writer/protocol";
+  import type {
+    PageMarginPreset,
+    PageOrientation,
+    WriterCommand,
+  } from "@/writer/protocol";
   import type { WriterState } from "@/writer/state.svelte";
   import WriterGlyph from "./WriterGlyph.svelte";
 
@@ -66,6 +70,17 @@
     }
     event.preventDefault();
     selectTab(tabs[nextIndex], true);
+  }
+
+  function changeOrientation(event: Event): void {
+    const orientation = (event.currentTarget as HTMLSelectElement).value as PageOrientation;
+    void execute({ type: "pageStyle.setOrientation", orientation });
+  }
+
+  function changeMargins(event: Event): void {
+    const preset = (event.currentTarget as HTMLSelectElement).value as PageMarginPreset;
+    if (preset === "custom") return;
+    void execute({ type: "pageStyle.setMargins", preset });
   }
 </script>
 
@@ -322,6 +337,35 @@
     >
       <section class="ow-ribbon-group" aria-label="Page setup">
         <div class="ow-ribbon-group-body">
+          <div class="ow-ribbon-fields">
+            <label class="ow-ribbon-field">
+              <span>Orientation</span>
+              <select
+                aria-label="Orientation"
+                value={state.orientation}
+                disabled={!client || !state.ready}
+                on:change={changeOrientation}
+              >
+                <option value="portrait">Portrait</option>
+                <option value="landscape">Landscape</option>
+              </select>
+            </label>
+            <label class="ow-ribbon-field">
+              <span>Margins</span>
+              <select
+                aria-label="Margins"
+                value={state.marginPreset}
+                disabled={!client || !state.ready}
+                on:change={changeMargins}
+              >
+                <option value="normal">Normal</option>
+                <option value="narrow">Narrow</option>
+                <option value="moderate">Moderate</option>
+                <option value="wide">Wide</option>
+                <option value="custom" disabled>Custom</option>
+              </select>
+            </label>
+          </div>
           <button
             class="ow-ribbon-command large"
             class:active={state.differentFirstPage}
@@ -540,6 +584,37 @@
     white-space: nowrap;
   }
 
+  .ow-ribbon-fields {
+    display: grid;
+    gap: 4px;
+    margin-right: 6px;
+  }
+
+  .ow-ribbon-field {
+    display: grid;
+    grid-template-columns: 64px 104px;
+    align-items: center;
+    gap: 5px;
+    color: var(--ow-text-muted);
+    font-size: 10px;
+  }
+
+  .ow-ribbon-field select {
+    width: 104px;
+    height: 24px;
+    padding: 0 22px 0 7px;
+    border: 1px solid var(--ow-input-border);
+    border-radius: 4px;
+    background: var(--ow-input-bg);
+    color: var(--ow-text);
+    font: inherit;
+    font-size: 10.5px;
+  }
+
+  .ow-ribbon-field select:disabled {
+    opacity: 0.5;
+  }
+
   .ow-ribbon-style-name {
     width: 150px;
     align-self: center;
@@ -573,7 +648,8 @@
 
   .ow-quick-button:focus-visible,
   .ow-ribbon-command:focus-visible,
-  .ow-ribbon-tab:focus-visible {
+  .ow-ribbon-tab:focus-visible,
+  .ow-ribbon-field select:focus-visible {
     position: relative;
     z-index: 1;
     outline: 2px solid var(--ow-accent);
@@ -606,6 +682,14 @@
 
     .ow-ribbon-command.large {
       width: 62px;
+    }
+
+    .ow-ribbon-field {
+      grid-template-columns: 56px 94px;
+    }
+
+    .ow-ribbon-field select {
+      width: 94px;
     }
 
     .ow-ribbon-style-name {
