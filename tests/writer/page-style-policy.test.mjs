@@ -6,7 +6,7 @@ import test from "node:test";
 const sourceUrl = new URL("../../public/writer-runtime/openword_writer_page_styles.js", import.meta.url);
 
 function loadPolicy() {
-  const context = { Object, Error };
+  const context = { Object, Error, Math, Number };
   runInNewContext(readFileSync(sourceUrl, "utf8"), context, { filename: sourceUrl.pathname });
   return context.OPENWORD_WRITER_PAGE_STYLES;
 }
@@ -42,6 +42,13 @@ test("reads page-style state using Word-facing semantics", () => {
     FirstIsShared: false,
     HeaderIsShared: true,
     FooterIsShared: false,
+    IsLandscape: false,
+    Width: 21590,
+    Height: 27940,
+    LeftMargin: 2540,
+    RightMargin: 2540,
+    TopMargin: 2540,
+    BottomMargin: 2540,
   };
   assert.deepEqual(
     normalize(policy.read("Default Page Style", (property) => values[property])),
@@ -51,6 +58,8 @@ test("reads page-style state using Word-facing semantics", () => {
       footerEnabled: false,
       differentFirstPage: true,
       differentOddEven: true,
+      orientation: "portrait",
+      marginPreset: "normal",
     },
   );
 });
