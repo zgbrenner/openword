@@ -8,6 +8,8 @@ export type WriterCommand =
   | { type: "format.toggleBold" }
   | { type: "format.toggleItalic" }
   | { type: "format.toggleUnderline" }
+  | { type: "format.setFontFamily"; fontFamily: string }
+  | { type: "format.setFontSize"; fontSize: number }
   | { type: "history.undo" }
   | { type: "history.redo" }
   | { type: "paragraph.alignLeft" }
@@ -77,7 +79,13 @@ export type WriterEvent =
   | {
       kind: "event";
       event: "selection.formatting";
-      payload: { bold: boolean; italic: boolean; underline: boolean };
+      payload: {
+        bold: boolean;
+        italic: boolean;
+        underline: boolean;
+        fontFamily: string;
+        fontSize: number | null;
+      };
     }
   | {
       kind: "event";
