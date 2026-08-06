@@ -17,6 +17,7 @@ export class WriterState {
   pageLabel = $state("");
   pageTooltip = $state("");
   wordCountLabel = $state("");
+  trackChangesEnabled = $state(false);
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
@@ -51,6 +52,9 @@ export class WriterState {
         this.pageLabel = event.payload.pageLabel;
         this.pageTooltip = event.payload.pageTooltip;
         this.wordCountLabel = event.payload.wordCountLabel;
+        break;
+      case "review.state":
+        this.trackChangesEnabled = event.payload.trackChangesEnabled;
         break;
       case "selection.formatting":
         this.bold = event.payload.bold;
