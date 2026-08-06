@@ -2,6 +2,7 @@ export type WriterFormat = "docx" | "odt";
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
 export type PageOrientation = "portrait" | "landscape";
 export type PageMarginPreset = "normal" | "narrow" | "moderate" | "wide" | "custom";
+export type PagePaperSize = "letter" | "a4" | "legal" | "custom";
 
 export type WriterCommand =
   | { type: "format.toggleBold" }
@@ -27,6 +28,10 @@ export type WriterCommand =
   | {
       type: "pageStyle.setMargins";
       preset: Exclude<PageMarginPreset, "custom">;
+    }
+  | {
+      type: "pageStyle.setPaperSize";
+      paperSize: Exclude<PagePaperSize, "custom">;
     };
 
 export type WriterRequestMethod =
@@ -84,6 +89,7 @@ export type WriterEvent =
         differentOddEven: boolean;
         orientation: PageOrientation;
         marginPreset: PageMarginPreset;
+        paperSize: PagePaperSize;
       };
     }
   | { kind: "event"; event: "engine.failure"; payload: WriterError };
