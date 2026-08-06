@@ -9,7 +9,7 @@ test("protocol carries semantic font commands and authoritative selection values
   const protocol = read("src/writer/protocol.ts");
   assert.match(protocol, /type:\s*"format\.setFontFamily"; fontFamily: string/);
   assert.match(protocol, /type:\s*"format\.setFontSize"; fontSize: number/);
-  assert.match(protocol, /fontFamily: string; fontSize: number \| null/);
+  assert.match(protocol, /fontFamily:\s*string;\s*fontSize:\s*number \| null;/);
 });
 
 test("UNO worker sets font properties for Latin Asian and complex scripts", () => {
