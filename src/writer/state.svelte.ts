@@ -20,6 +20,8 @@ export class WriterState {
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
+  fontFamily = $state("");
+  fontSize = $state<number | null>(null);
   alignment = $state<ParagraphAlignment>("left");
   bullets = $state(false);
   numbering = $state(false);
@@ -54,6 +56,8 @@ export class WriterState {
         this.bold = event.payload.bold;
         this.italic = event.payload.italic;
         this.underline = event.payload.underline;
+        this.fontFamily = event.payload.fontFamily;
+        this.fontSize = event.payload.fontSize;
         break;
       case "selection.paragraph":
         this.alignment = event.payload.alignment;
