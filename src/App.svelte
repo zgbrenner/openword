@@ -21,6 +21,7 @@
     PackageCompatibilityReport,
     PackagePreservationSnapshot,
   } from "@/writer/packagePassthrough";
+  import type { WriterCommand } from "@/writer/protocol";
   import {
     clearRecoverySnapshot,
     readRecoverySnapshot,
@@ -111,7 +112,7 @@
 
   async function reportRetainedBackup(result: { recoveryPath: string | null }): Promise<void> {
     if (!result.recoveryPath) return;
-    const detail = `The document was saved, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
+    const detail = `The file was written, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
     if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
     else console.warn(detail);
   }
@@ -262,21 +263,21 @@
     else window.alert(detail);
   }
 
-  async function execute(type:
-    | "format.toggleBold"
-    | "format.toggleItalic"
-    | "format.toggleUnderline"
-    | "history.undo"
-    | "history.redo"
-  ): Promise<void> {
+  async function execute(command: WriterCommand): Promise<void> {
     const writer = requireWriter();
     if (!writer) return;
     try {
-      await writer.client.execute({ type });
+      await writer.client.execute(command);
       requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
     } catch (error) {
       await showError("Writer command failed", error);
     }
+  }
+
+  async function showWordCount(): Promise<void> {
+    const detail = writerState.wordCountLabel || "Writer is calculating the document statistics.";
+    if (isTauri()) await message(detail, { title: "Word count" });
+    else window.alert(detail);
   }
 
   async function handleMenuAction(id: string): Promise<void> {
@@ -288,11 +289,19 @@
       case "file_export_pdf": return doExportPdf();
       case "file_print": return unavailable("Printing");
       case "file_close": return;
-      case "edit_undo": return execute("history.undo");
-      case "edit_redo": return execute("history.redo");
-      case "format_bold": return execute("format.toggleBold");
-      case "format_italic": return execute("format.toggleItalic");
-      case "format_underline": return execute("format.toggleUnderline");
+      case "edit_undo": return execute({ type: "history.undo" });
+      case "edit_redo": return execute({ type: "history.redo" });
+      case "insert_page_break": return execute({ type: "insert.pageBreak" });
+      case "format_bold": return execute({ type: "format.toggleBold" });
+      case "format_italic": return execute({ type: "format.toggleItalic" });
+      case "format_underline": return execute({ type: "format.toggleUnderline" });
+      case "format_align_left": return execute({ type: "paragraph.alignLeft" });
+      case "format_align_center": return execute({ type: "paragraph.alignCenter" });
+      case "format_align_right": return execute({ type: "paragraph.alignRight" });
+      case "format_align_justify": return execute({ type: "paragraph.alignJustify" });
+      case "format_bullet_list": return execute({ type: "list.toggleBullets" });
+      case "format_ordered_list": return execute({ type: "list.toggleNumbering" });
+      case "tools_word_count": return showWordCount();
       case "help_about":
         if (isTauri()) {
           await message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" });
