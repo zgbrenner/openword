@@ -12,6 +12,7 @@ const statusListeners = [];
 const formatting = { bold: false, italic: false, underline: false };
 const paragraph = { alignment: "left", bullets: false, numbering: false };
 const documentStatistics = { pageLabel: "", pageTooltip: "", wordCountLabel: "" };
+const reviewState = { trackChangesEnabled: false };
 
 const commandUrls = OPENWORD_WRITER_COMMANDS;
 
@@ -222,6 +223,17 @@ function addDocumentStatisticsStatus() {
   });
 }
 
+function emitReviewState() {
+  postEvent("review.state", { ...reviewState });
+}
+
+function addReviewStatus() {
+  addStatusListener("TrackChanges", (value) => {
+    reviewState.trackChangesEnabled = value === true;
+    emitReviewState();
+  });
+}
+
 function emitFormatting() {
   postEvent("selection.formatting", { ...formatting, ...readTextFormatting() });
   emitPageStyle();
@@ -265,6 +277,7 @@ function attachDocumentListeners() {
   addListStatus("DefaultBullet", "bullets");
   addListStatus("DefaultNumbering", "numbering");
   addDocumentStatisticsStatus();
+  addReviewStatus();
   emitFormatting();
 
   if (model && typeof model.addModifyListener === "function") {
@@ -298,7 +311,9 @@ function activateModel(nextModel) {
   documentStatistics.pageLabel = "";
   documentStatistics.pageTooltip = "";
   documentStatistics.wordCountLabel = "";
+  reviewState.trackChangesEnabled = false;
   emitDocumentStatistics();
+  emitReviewState();
   hideDocumentChrome();
   attachDocumentListeners();
   emitPageStyle();
@@ -340,9 +355,6 @@ function writeDocument(path, format, markClean) {
     new css.beans.PropertyValue({ Name: "Overwrite", Value: true }),
   ];
 
-  // storeToURL exports to OpenWord's temporary virtual file without changing
-  // Writer's internal document URL to a path that OpenWord will immediately
-  // remove. Recovery snapshots deliberately leave modified state untouched.
   model.storeToURL(path, properties);
   if (markClean) {
     if (typeof model.setModified === "function") model.setModified(false);
