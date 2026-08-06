@@ -1,4 +1,11 @@
-import type { ParagraphAlignment, WriterError, WriterEvent, WriterFormat } from "./protocol";
+import type {
+  PageMarginPreset,
+  PageOrientation,
+  ParagraphAlignment,
+  WriterError,
+  WriterEvent,
+  WriterFormat,
+} from "./protocol";
 
 export class WriterState {
   ready = $state(false);
@@ -17,6 +24,8 @@ export class WriterState {
   footerEnabled = $state(false);
   differentFirstPage = $state(false);
   differentOddEven = $state(false);
+  orientation = $state<PageOrientation>("portrait");
+  marginPreset = $state<PageMarginPreset>("normal");
   fileName = $state("Document1.docx");
   filePath = $state<string | null>(null);
   format = $state<WriterFormat>("docx");
@@ -47,6 +56,8 @@ export class WriterState {
         this.footerEnabled = event.payload.footerEnabled;
         this.differentFirstPage = event.payload.differentFirstPage;
         this.differentOddEven = event.payload.differentOddEven;
+        this.orientation = event.payload.orientation;
+        this.marginPreset = event.payload.marginPreset;
         break;
       case "engine.failure":
         this.ready = false;
