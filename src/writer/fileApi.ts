@@ -34,6 +34,12 @@ export interface WriterSaveResult {
   compatibilityReport: PackageCompatibilityReport;
 }
 
+export interface WriterPdfExportResult {
+  path: string;
+  bytesWritten: number;
+  recoveryPath: string | null;
+}
+
 const OPEN_FILTERS = [
   { name: "All supported documents", extensions: ["docx", "odt", "owdoc"] },
   { name: "Word Document", extensions: ["docx"] },
@@ -55,8 +61,8 @@ function operationToken(): string {
   return raw.replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-function virtualPath(purpose: string, format: WriterFormat): string {
-  return `/tmp/openword/${purpose}-${operationToken()}.${format}`;
+function virtualPath(purpose: string, extension: WriterFormat | "pdf"): string {
+  return `/tmp/openword/${purpose}-${operationToken()}.${extension}`;
 }
 
 function virtualUrl(path: string): string {
@@ -177,6 +183,31 @@ export async function saveWriterDocument(
     preservation: merged.preservation,
     compatibilityReport: merged.compatibilityReport,
   };
+}
+
+export async function exportWriterPdfDialog(
+  client: WriterClient,
+  host: WriterRuntimeHost,
+  suggestedBaseName = "Document1",
+): Promise<WriterPdfExportResult | null> {
+  const targetPath = await save({
+    defaultPath: `${suggestedBaseName}.pdf`,
+    filters: [{ name: "PDF Document", extensions: ["pdf"] }],
+  });
+  if (!targetPath) return null;
+
+  const stagedVirtualPath = virtualPath("pdf-export", "pdf");
+  await client.exportPdfPath(virtualUrl(stagedVirtualPath));
+
+  let bytes: Uint8Array;
+  try {
+    bytes = host.readVirtualFile(stagedVirtualPath);
+  } finally {
+    host.removeVirtualFile(stagedVirtualPath);
+  }
+
+  const recoveryPath = await replaceWithStagedFile(targetPath, bytes);
+  return { path: targetPath, bytesWritten: bytes.byteLength, recoveryPath };
 }
 
 /**
