@@ -1,5 +1,7 @@
 export type WriterFormat = "docx" | "odt";
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
+export type PageOrientation = "portrait" | "landscape";
+export type PageMarginPreset = "normal" | "narrow" | "moderate" | "wide" | "custom";
 
 export type WriterCommand =
   | { type: "format.toggleBold" }
@@ -19,7 +21,12 @@ export type WriterCommand =
   | { type: "header.setEnabled"; enabled: boolean }
   | { type: "footer.setEnabled"; enabled: boolean }
   | { type: "pageStyle.setDifferentFirstPage"; enabled: boolean }
-  | { type: "pageStyle.setDifferentOddEven"; enabled: boolean };
+  | { type: "pageStyle.setDifferentOddEven"; enabled: boolean }
+  | { type: "pageStyle.setOrientation"; orientation: PageOrientation }
+  | {
+      type: "pageStyle.setMargins";
+      preset: Exclude<PageMarginPreset, "custom">;
+    };
 
 export type WriterRequestMethod =
   | "engine.ping"
@@ -74,6 +81,8 @@ export type WriterEvent =
         footerEnabled: boolean;
         differentFirstPage: boolean;
         differentOddEven: boolean;
+        orientation: PageOrientation;
+        marginPreset: PageMarginPreset;
       };
     }
   | { kind: "event"; event: "engine.failure"; payload: WriterError };
