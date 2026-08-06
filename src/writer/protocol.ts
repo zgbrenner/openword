@@ -70,6 +70,11 @@ export type WriterEvent =
   | { kind: "event"; event: "document.changed"; payload: { dirty: boolean } }
   | {
       kind: "event";
+      event: "document.statistics";
+      payload: { pageLabel: string; pageTooltip: string; wordCountLabel: string };
+    }
+  | {
+      kind: "event";
       event: "selection.formatting";
       payload: { bold: boolean; italic: boolean; underline: boolean };
     }
