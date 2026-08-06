@@ -8,6 +8,7 @@
   import WriterStatusBar from "@/components/WriterStatusBar.svelte";
   import { WriterClient } from "@/writer/client";
   import {
+    exportWriterPdfDialog,
     openWriterDocumentAtPath,
     openWriterDocumentBytes,
     openWriterDocumentDialog,
@@ -20,6 +21,7 @@
     PackageCompatibilityReport,
     PackagePreservationSnapshot,
   } from "@/writer/packagePassthrough";
+  import type { WriterCommand } from "@/writer/protocol";
   import {
     clearRecoverySnapshot,
     readRecoverySnapshot,
@@ -108,9 +110,9 @@
     }
   }
 
-  async function reportRetainedBackup(result: WriterSaveResult): Promise<void> {
+  async function reportRetainedBackup(result: { recoveryPath: string | null }): Promise<void> {
     if (!result.recoveryPath) return;
-    const detail = `The document was saved, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
+    const detail = `The file was written, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
     if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
     else console.warn(detail);
   }
@@ -185,6 +187,19 @@
     }
   }
 
+  async function doExportPdf(): Promise<void> {
+    const writer = requireWriter();
+    if (!writer) return;
+    const baseName = writerState.fileName.replace(/\.[^.]+$/, "") || "Document1";
+    try {
+      const result = await exportWriterPdfDialog(writer.client, writer.host, baseName);
+      if (!result) return;
+      await reportRetainedBackup(result);
+    } catch (error) {
+      await showError("Could not export PDF", error);
+    }
+  }
+
   async function persistRecovery(): Promise<void> {
     const writer = requireWriter();
     if (!isTauri() || !writer || !writerState.dirty || recoveryInFlight) return;
@@ -248,21 +263,21 @@
     else window.alert(detail);
   }
 
-  async function execute(type:
-    | "format.toggleBold"
-    | "format.toggleItalic"
-    | "format.toggleUnderline"
-    | "history.undo"
-    | "history.redo"
-  ): Promise<void> {
+  async function execute(command: WriterCommand): Promise<void> {
     const writer = requireWriter();
     if (!writer) return;
     try {
-      await writer.client.execute({ type });
+      await writer.client.execute(command);
       requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
     } catch (error) {
       await showError("Writer command failed", error);
     }
+  }
+
+  async function showWordCount(): Promise<void> {
+    const detail = writerState.wordCountLabel || "Writer is calculating the document statistics.";
+    if (isTauri()) await message(detail, { title: "Word count" });
+    else window.alert(detail);
   }
 
   async function handleMenuAction(id: string): Promise<void> {
@@ -271,18 +286,27 @@
       case "file_open": return doOpen();
       case "file_save": return doSave();
       case "file_save_as": return doSaveAs();
-      case "file_export_docx": return unavailable("Export to DOCX");
+      case "file_export_pdf": return doExportPdf();
       case "file_print": return unavailable("Printing");
       case "file_close": return;
-      case "edit_undo": return execute("history.undo");
-      case "edit_redo": return execute("history.redo");
-      case "format_bold": return execute("format.toggleBold");
-      case "format_italic": return execute("format.toggleItalic");
-      case "format_underline": return execute("format.toggleUnderline");
+      case "edit_undo": return execute({ type: "history.undo" });
+      case "edit_redo": return execute({ type: "history.redo" });
+      case "insert_page_break": return execute({ type: "insert.pageBreak" });
+      case "format_bold": return execute({ type: "format.toggleBold" });
+      case "format_italic": return execute({ type: "format.toggleItalic" });
+      case "format_underline": return execute({ type: "format.toggleUnderline" });
+      case "format_align_left": return execute({ type: "paragraph.alignLeft" });
+      case "format_align_center": return execute({ type: "paragraph.alignCenter" });
+      case "format_align_right": return execute({ type: "paragraph.alignRight" });
+      case "format_align_justify": return execute({ type: "paragraph.alignJustify" });
+      case "format_bullet_list": return execute({ type: "list.toggleBullets" });
+      case "format_ordered_list": return execute({ type: "list.toggleNumbering" });
+      case "tools_word_count": return showWordCount();
       case "help_about":
-        return isTauri()
-          ? message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" })
-          : undefined;
+        if (isTauri()) {
+          await message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" });
+        }
+        return;
       default:
         return unavailable(id.replaceAll("_", " "));
     }
@@ -362,7 +386,12 @@
 </script>
 
 <div class="ow-app">
-  <WriterHomeBar {client} state={writerState} onsave={() => void doSave()} />
+  <WriterHomeBar
+    {client}
+    state={writerState}
+    onsave={() => void doSave()}
+    onerror={(error) => void showError("Writer command failed", error)}
+  />
   <main class="ow-writer-main">
     <WriterCanvas
       onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}

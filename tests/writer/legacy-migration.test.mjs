@@ -41,10 +41,12 @@ test("new Writer documents never serialize back to owdoc", () => {
   }, /Unsupported Writer document format/);
 });
 
-test("native shell still routes legacy files to the migration importer", () => {
+test("native shell routes legacy files through the shared supported-document predicate", () => {
   const rust = read("src-tauri/src/lib.rs");
   const config = read("src-tauri/tauri.conf.json");
-  assert.match(rust, /ends_with\("\.owdoc"\)/);
+  assert.match(rust, /fn is_supported_document_path\(path: &str\) -> bool/);
+  assert.match(rust, /Some\("docx" \| "odt" \| "owdoc"\)/);
+  assert.match(rust, /filter\(\|argument\| is_supported_document_path\(argument\)\)/);
   assert.match(config, /"ext": \["owdoc"\]/);
   assert.match(config, /Legacy OpenWord Document/);
 });

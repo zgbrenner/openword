@@ -17,6 +17,16 @@ export interface WriterRuntimeOptions {
   startupTimeoutMs?: number;
 }
 
+interface RuntimeManifestFile {
+  bytes: number;
+  sha256: string;
+}
+
+interface RuntimeManifest {
+  schemaVersion?: number;
+  files?: Record<string, RuntimeManifestFile | undefined>;
+}
+
 export function runtimeAssetUrl(file: string, baseUrl = "./writer-runtime/"): string {
   if (/^(?:https?:|data:|\/\/)/i.test(baseUrl)) throw new Error("Remote Writer runtimes are forbidden");
   return `${baseUrl.replace(/\/?$/, "/")}${file}`;
@@ -47,6 +57,16 @@ function assertThreadedWasmSupport(): void {
   if (typeof globalThis.WebAssembly === "undefined") {
     throw new Error("This system webview does not provide WebAssembly support.");
   }
+}
+
+function isValidManifestFile(value: RuntimeManifestFile | undefined): value is RuntimeManifestFile {
+  return Boolean(
+    value &&
+    Number.isSafeInteger(value.bytes) &&
+    value.bytes > 0 &&
+    typeof value.sha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(value.sha256),
+  );
 }
 
 export class WriterRuntimeHost {
@@ -90,6 +110,7 @@ export class WriterRuntimeHost {
     window.Module = module;
 
     try {
+      await this.verifyRuntimeManifest();
       await this.loadScript(sofficeUrl);
       const portPromise = module.uno_main;
       if (!portPromise) throw new Error("LOWA did not expose Module.uno_main");
@@ -130,6 +151,46 @@ export class WriterRuntimeHost {
     if (window.Module === this.module) delete window.Module;
     this.module = null;
     this.started = false;
+  }
+
+  private async verifyRuntimeManifest(): Promise<void> {
+    const manifestPath = runtimeAssetUrl("runtime-manifest.json", this.baseUrl);
+    const manifestUrl = new URL(manifestPath, document.baseURI).href;
+    let response: Response;
+    try {
+      response = await fetch(manifestUrl, {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not read the local Writer runtime manifest at ${manifestPath}: ${detail}`);
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Could not read the local Writer runtime manifest at ${manifestPath} (HTTP ${response.status}). ` +
+        "Run npm run engine:build or install a verified Writer runtime.",
+      );
+    }
+
+    let manifest: RuntimeManifest;
+    try {
+      manifest = await response.json() as RuntimeManifest;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Writer runtime manifest is not valid JSON: ${detail}`);
+    }
+
+    const missing: string[] = [];
+    for (const file of REQUIRED_RUNTIME_FILES) {
+      if (!isValidManifestFile(manifest.files?.[file])) missing.push(file);
+    }
+    if (missing.length) {
+      throw new Error(
+        `Writer runtime manifest is missing required files: ${missing.join(", ")}. ` +
+        "Rebuild or reinstall the pinned Writer runtime before opening documents.",
+      );
+    }
   }
 
   private createTransport(port: MessagePort): WriterTransport {

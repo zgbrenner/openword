@@ -76,6 +76,10 @@ export class WriterClient {
     await this.request("document.snapshot", { path, format });
   }
 
+  async exportPdfPath(path: string): Promise<void> {
+    await this.request("document.exportPdf", { path });
+  }
+
   async execute(command: WriterCommand): Promise<void> {
     await this.request("command.execute", { command });
   }

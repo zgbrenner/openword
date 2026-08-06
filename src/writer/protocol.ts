@@ -1,10 +1,15 @@
 export type WriterFormat = "docx" | "odt";
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
+export type PageOrientation = "portrait" | "landscape";
+export type PageMarginPreset = "normal" | "narrow" | "moderate" | "wide" | "custom";
+export type PagePaperSize = "letter" | "a4" | "legal" | "custom";
 
 export type WriterCommand =
   | { type: "format.toggleBold" }
   | { type: "format.toggleItalic" }
   | { type: "format.toggleUnderline" }
+  | { type: "format.setFontFamily"; fontFamily: string }
+  | { type: "format.setFontSize"; fontSize: number }
   | { type: "history.undo" }
   | { type: "history.redo" }
   | { type: "paragraph.alignLeft" }
@@ -14,12 +19,29 @@ export type WriterCommand =
   | { type: "list.toggleBullets" }
   | { type: "list.toggleNumbering" }
   | { type: "insert.pageBreak" }
+  | { type: "field.insertPageNumber" }
   | { type: "header.edit" }
   | { type: "footer.edit" }
   | { type: "header.setEnabled"; enabled: boolean }
   | { type: "footer.setEnabled"; enabled: boolean }
   | { type: "pageStyle.setDifferentFirstPage"; enabled: boolean }
-  | { type: "pageStyle.setDifferentOddEven"; enabled: boolean };
+  | { type: "pageStyle.setDifferentOddEven"; enabled: boolean }
+  | { type: "pageStyle.setOrientation"; orientation: PageOrientation }
+  | {
+      type: "pageStyle.setMargins";
+      preset: Exclude<PageMarginPreset, "custom">;
+    }
+  | {
+      type: "pageStyle.setPaperSize";
+      paperSize: Exclude<PagePaperSize, "custom">;
+    }
+  | { type: "review.toggleTrackChanges" }
+  | { type: "review.previousChange" }
+  | { type: "review.nextChange" }
+  | { type: "review.acceptChange" }
+  | { type: "review.rejectChange" }
+  | { type: "review.acceptAllChanges" }
+  | { type: "review.rejectAllChanges" };
 
 export type WriterRequestMethod =
   | "engine.ping"
@@ -27,6 +49,7 @@ export type WriterRequestMethod =
   | "document.open"
   | "document.save"
   | "document.snapshot"
+  | "document.exportPdf"
   | "command.execute";
 
 export interface WriterRequest {
@@ -57,8 +80,24 @@ export type WriterEvent =
   | { kind: "event"; event: "document.changed"; payload: { dirty: boolean } }
   | {
       kind: "event";
+      event: "document.statistics";
+      payload: { pageLabel: string; pageTooltip: string; wordCountLabel: string };
+    }
+  | {
+      kind: "event";
+      event: "review.state";
+      payload: { trackChangesEnabled: boolean };
+    }
+  | {
+      kind: "event";
       event: "selection.formatting";
-      payload: { bold: boolean; italic: boolean; underline: boolean };
+      payload: {
+        bold: boolean;
+        italic: boolean;
+        underline: boolean;
+        fontFamily: string;
+        fontSize: number | null;
+      };
     }
   | {
       kind: "event";
@@ -74,6 +113,9 @@ export type WriterEvent =
         footerEnabled: boolean;
         differentFirstPage: boolean;
         differentOddEven: boolean;
+        orientation: PageOrientation;
+        marginPreset: PageMarginPreset;
+        paperSize: PagePaperSize;
       };
     }
   | { kind: "event"; event: "engine.failure"; payload: WriterError };
