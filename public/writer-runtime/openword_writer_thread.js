@@ -127,7 +127,10 @@ function emitPageStyle() {
 
 function applyPageStyleCommand(command) {
   const { pageStyle } = currentPageStyle();
-  const updates = OPENWORD_WRITER_PAGE_STYLES.updatesFor(command);
+  const updates = OPENWORD_WRITER_PAGE_STYLES.updatesFor(
+    command,
+    (property) => pageStyle.getPropertyValue(property),
+  );
   for (const update of updates) {
     pageStyle.setPropertyValue(update.property, update.value);
   }
@@ -223,6 +226,10 @@ function activateModel(nextModel) {
 
 function newDocument() {
   activateModel(desktop.loadComponentFromURL("private:factory/swriter", "_default", 0, []));
+  applyPageStyleCommand({ type: "pageStyle.setOrientation", orientation: "portrait" });
+  applyPageStyleCommand({ type: "pageStyle.setMargins", preset: "normal" });
+  if (model && typeof model.setModified === "function") model.setModified(false);
+  postEvent("document.changed", { dirty: false });
 }
 
 function assertVirtualFileUrl(path) {
