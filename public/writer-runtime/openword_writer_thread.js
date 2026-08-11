@@ -11,6 +11,8 @@ let modifyListener = null;
 const statusListeners = [];
 const formatting = { bold: false, italic: false, underline: false };
 const paragraph = { alignment: "left", bullets: false, numbering: false };
+const documentStatistics = { pageLabel: "", pageTooltip: "", wordCountLabel: "" };
+const reviewState = { trackChangesEnabled: false };
 
 const commandUrls = OPENWORD_WRITER_COMMANDS;
 
@@ -127,7 +129,10 @@ function emitPageStyle() {
 
 function applyPageStyleCommand(command) {
   const { pageStyle } = currentPageStyle();
-  const updates = OPENWORD_WRITER_PAGE_STYLES.updatesFor(command);
+  const updates = OPENWORD_WRITER_PAGE_STYLES.updatesFor(
+    command,
+    (property) => pageStyle.getPropertyValue(property),
+  );
   for (const update of updates) {
     pageStyle.setPropertyValue(update.property, update.value);
   }
@@ -144,8 +149,93 @@ function editPageRegion(kind) {
   dispatch(commandUrls[kind === "header" ? "header.edit" : "footer.edit"]);
 }
 
+function insertPageNumberField() {
+  if (!model || !controller) throw new Error("No Writer document is active");
+  const viewCursor = controller.getViewCursor();
+  const text = viewCursor.getText();
+  if (!text || typeof text.insertTextContent !== "function") {
+    throw new Error("The current Writer selection cannot contain a page-number field");
+  }
+  const field = model.createInstance("com.sun.star.text.TextField.PageNumber");
+  if (!field) throw new Error("Writer could not create a page-number field");
+  field.setPropertyValue("SubType", 1);
+  field.setPropertyValue("NumberingType", 4);
+  text.insertTextContent(viewCursor, field, false);
+}
+
+function readTextFormatting() {
+  if (!controller) return { fontFamily: "", fontSize: null };
+  try {
+    const viewCursor = controller.getViewCursor();
+    const rawFontFamily = viewCursor.getPropertyValue("CharFontName");
+    const rawFontSize = Number(viewCursor.getPropertyValue("CharHeight"));
+    return {
+      fontFamily: typeof rawFontFamily === "string" ? rawFontFamily : "",
+      fontSize: Number.isFinite(rawFontSize) && rawFontSize > 0 ? rawFontSize : null,
+    };
+  } catch {
+    return { fontFamily: "", fontSize: null };
+  }
+}
+
+function setFontFamily(fontFamily) {
+  if (!controller || typeof fontFamily !== "string") {
+    throw new Error("A font family name is required");
+  }
+  const value = fontFamily.trim();
+  if (!value || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("The selected font family is invalid");
+  }
+  const viewCursor = controller.getViewCursor();
+  viewCursor.setPropertyValue("CharFontName", value);
+  viewCursor.setPropertyValue("CharFontNameAsian", value);
+  viewCursor.setPropertyValue("CharFontNameComplex", value);
+  emitFormatting();
+}
+
+function setFontSize(fontSize) {
+  if (!controller) throw new Error("No Writer document is active");
+  const value = Number(fontSize);
+  if (!Number.isFinite(value) || value < 1 || value > 300) {
+    throw new Error("Font size must be between 1 and 300 points");
+  }
+  const viewCursor = controller.getViewCursor();
+  viewCursor.setPropertyValue("CharHeight", value);
+  viewCursor.setPropertyValue("CharHeightAsian", value);
+  viewCursor.setPropertyValue("CharHeightComplex", value);
+  emitFormatting();
+}
+
+function emitDocumentStatistics() {
+  postEvent("document.statistics", { ...documentStatistics });
+}
+
+function addDocumentStatisticsStatus() {
+  addStatusListener("StateWordCount", (value) => {
+    documentStatistics.wordCountLabel = typeof value === "string" ? value : "";
+    emitDocumentStatistics();
+  });
+  addStatusListener("StatePageNumber", (value) => {
+    const labels = Array.isArray(value) ? value : [];
+    documentStatistics.pageLabel = typeof labels[0] === "string" ? labels[0] : "";
+    documentStatistics.pageTooltip = typeof labels[1] === "string" ? labels[1] : "";
+    emitDocumentStatistics();
+  });
+}
+
+function emitReviewState() {
+  postEvent("review.state", { ...reviewState });
+}
+
+function addReviewStatus() {
+  addStatusListener("TrackChanges", (value) => {
+    reviewState.trackChangesEnabled = value === true;
+    emitReviewState();
+  });
+}
+
 function emitFormatting() {
-  postEvent("selection.formatting", { ...formatting });
+  postEvent("selection.formatting", { ...formatting, ...readTextFormatting() });
   emitPageStyle();
 }
 
@@ -186,6 +276,9 @@ function attachDocumentListeners() {
   addParagraphStatus("JustifyPara", "justify");
   addListStatus("DefaultBullet", "bullets");
   addListStatus("DefaultNumbering", "numbering");
+  addDocumentStatisticsStatus();
+  addReviewStatus();
+  emitFormatting();
 
   if (model && typeof model.addModifyListener === "function") {
     modifyListener = zetajs.unoObject([css.util.XModifyListener], {
@@ -215,6 +308,12 @@ function activateModel(nextModel) {
   if (!nextModel) throw new Error("Writer did not return a document model");
   model = nextModel;
   controller = model.getCurrentController();
+  documentStatistics.pageLabel = "";
+  documentStatistics.pageTooltip = "";
+  documentStatistics.wordCountLabel = "";
+  reviewState.trackChangesEnabled = false;
+  emitDocumentStatistics();
+  emitReviewState();
   hideDocumentChrome();
   attachDocumentListeners();
   emitPageStyle();
@@ -223,6 +322,11 @@ function activateModel(nextModel) {
 
 function newDocument() {
   activateModel(desktop.loadComponentFromURL("private:factory/swriter", "_default", 0, []));
+  applyPageStyleCommand({ type: "pageStyle.setPaperSize", paperSize: "letter" });
+  applyPageStyleCommand({ type: "pageStyle.setOrientation", orientation: "portrait" });
+  applyPageStyleCommand({ type: "pageStyle.setMargins", preset: "normal" });
+  if (model && typeof model.setModified === "function") model.setModified(false);
+  postEvent("document.changed", { dirty: false });
 }
 
 function assertVirtualFileUrl(path) {
@@ -251,14 +355,21 @@ function writeDocument(path, format, markClean) {
     new css.beans.PropertyValue({ Name: "Overwrite", Value: true }),
   ];
 
-  // storeToURL exports to OpenWord's temporary virtual file without changing
-  // Writer's internal document URL to a path that OpenWord will immediately
-  // remove. Recovery snapshots deliberately leave modified state untouched.
   model.storeToURL(path, properties);
   if (markClean) {
     if (typeof model.setModified === "function") model.setModified(false);
     postEvent("document.changed", { dirty: false });
   }
+}
+
+function exportPdf(path) {
+  if (!model) throw new Error("No Writer document is active");
+  assertVirtualFileUrl(path);
+  const properties = [
+    new css.beans.PropertyValue({ Name: "FilterName", Value: "writer_pdf_Export" }),
+    new css.beans.PropertyValue({ Name: "Overwrite", Value: true }),
+  ];
+  model.storeToURL(path, properties);
 }
 
 function executeCommand(command) {
@@ -269,6 +380,18 @@ function executeCommand(command) {
   }
   if (type === "footer.edit") {
     editPageRegion("footer");
+    return;
+  }
+  if (type === "field.insertPageNumber") {
+    insertPageNumberField();
+    return;
+  }
+  if (type === "format.setFontFamily") {
+    setFontFamily(command.fontFamily);
+    return;
+  }
+  if (type === "format.setFontSize") {
+    setFontSize(command.fontSize);
     return;
   }
   const unoUrl = commandUrls[type];
@@ -305,6 +428,10 @@ function bindRequests() {
           writeDocument(request.params?.path, request.params?.format, false);
           respond(request.id);
           return;
+        case "document.exportPdf":
+          exportPdf(request.params?.path);
+          respond(request.id);
+          return;
         case "command.execute":
           executeCommand(request.params?.command);
           respond(request.id);
@@ -315,7 +442,9 @@ function bindRequests() {
     } catch (error) {
       const code = request.method === "document.open"
         ? "OPEN_FAILED"
-        : request.method === "document.save" || request.method === "document.snapshot"
+        : request.method === "document.save" ||
+            request.method === "document.snapshot" ||
+            request.method === "document.exportPdf"
           ? "SAVE_FAILED"
           : request.method === "command.execute"
             ? "COMMAND_FAILED"

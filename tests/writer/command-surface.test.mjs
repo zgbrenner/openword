@@ -19,8 +19,8 @@ test("TypeScript command protocol covers every dispatch-policy command", () => {
   }
 });
 
-test("Home surface exposes verified paragraph, list, and page-break commands", () => {
-  const home = read("src/components/WriterHomeBar.svelte");
+test("ribbon exposes verified paragraph, list, and page-break commands", () => {
+  const ribbon = read("src/components/WriterHomeBar.svelte");
   for (const command of [
     "paragraph.alignLeft",
     "paragraph.alignCenter",
@@ -30,10 +30,11 @@ test("Home surface exposes verified paragraph, list, and page-break commands", (
     "list.toggleNumbering",
     "insert.pageBreak",
   ]) {
-    assert.match(home, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(ribbon, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.match(home, /aria-label="Paragraph"/);
-  assert.match(home, /aria-label="Insert"/);
+  assert.match(ribbon, /aria-label="Paragraph"/);
+  assert.match(ribbon, /id="ow-ribbon-tab-insert"/);
+  assert.match(ribbon, /aria-controls="ow-ribbon-panel-insert"/);
 });
 
 test("UNO worker publishes paragraph selection state for active controls", () => {

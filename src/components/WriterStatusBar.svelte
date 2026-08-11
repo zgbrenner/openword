@@ -31,9 +31,14 @@
 
 <footer class="ow-writer-status" aria-label="Document status">
   <div class="ow-writer-status-primary">
-    <span>{state.ready ? "Ready" : state.failure ? "Engine failed" : "Loading Writer"}</span>
-    <span class="ow-writer-dot" aria-hidden="true">•</span>
-    <span>{state.fileName}</span>
+    <span class="ow-writer-engine-state">{state.ready ? "Ready" : state.failure ? "Engine failed" : "Loading Writer"}</span>
+    {#if state.pageLabel}
+      <span class="ow-writer-stat" title={state.pageTooltip || state.pageLabel}>{state.pageLabel}</span>
+    {/if}
+    {#if state.wordCountLabel}
+      <span class="ow-writer-stat words" title={state.wordCountLabel}>{state.wordCountLabel}</span>
+    {/if}
+    <span class="ow-writer-file" title={state.fileName}>{state.fileName}</span>
     {#if state.dirty}<span class="ow-writer-unsaved">Unsaved</span>{/if}
     {#if state.requiresSaveAs}
       <span
@@ -82,18 +87,32 @@
     gap: 8px;
   }
 
-  .ow-writer-status-primary span:nth-child(3),
+  .ow-writer-status-secondary {
+    justify-content: flex-end;
+  }
+
+  .ow-writer-stat,
+  .ow-writer-file,
   .ow-writer-status-secondary span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .ow-writer-status-secondary {
-    justify-content: flex-end;
+  .ow-writer-stat {
+    max-width: 210px;
+    padding-left: 8px;
+    border-left: 1px solid var(--ow-divider);
+    color: var(--ow-text);
   }
 
-  .ow-writer-dot { opacity: 0.55; }
+  .ow-writer-stat.words {
+    max-width: 260px;
+  }
+
+  .ow-writer-file {
+    max-width: 220px;
+  }
 
   .ow-writer-unsaved,
   .ow-writer-migration,
@@ -109,12 +128,15 @@
     white-space: nowrap;
   }
 
-  @media (max-width: 900px) {
-    .ow-writer-migration { max-width: 150px; }
+  @media (max-width: 980px) {
+    .ow-writer-engine-state,
+    .ow-writer-file,
+    .ow-writer-migration { display: none; }
+    .ow-writer-stat.words { max-width: 220px; }
   }
 
-  @media (max-width: 780px) {
-    .ow-writer-status-secondary span:nth-last-child(n + 3),
-    .ow-writer-migration { display: none; }
+  @media (max-width: 760px) {
+    .ow-writer-status-secondary span:nth-last-child(n + 3) { display: none; }
+    .ow-writer-stat.words { max-width: 150px; }
   }
 </style>

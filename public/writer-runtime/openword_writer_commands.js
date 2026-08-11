@@ -15,5 +15,12 @@ var OPENWORD_WRITER_COMMANDS = Object.freeze({
   "list.toggleNumbering": ".uno:DefaultNumbering",
   "insert.pageBreak": ".uno:InsertPagebreak",
   "header.edit": ".uno:JumpToHeader",
-  "footer.edit": ".uno:JumpToFooter"
+  "footer.edit": ".uno:JumpToFooter",
+  "review.toggleTrackChanges": ".uno:TrackChanges",
+  "review.previousChange": ".uno:PreviousTrackedChange",
+  "review.nextChange": ".uno:NextTrackedChange",
+  "review.acceptChange": ".uno:AcceptTrackedChange",
+  "review.rejectChange": ".uno:RejectTrackedChange",
+  "review.acceptAllChanges": ".uno:AcceptAllTrackedChanges",
+  "review.rejectAllChanges": ".uno:RejectAllTrackedChanges"
 });

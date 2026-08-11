@@ -1,4 +1,12 @@
-import type { ParagraphAlignment, WriterError, WriterEvent, WriterFormat } from "./protocol";
+import type {
+  PageMarginPreset,
+  PageOrientation,
+  PagePaperSize,
+  ParagraphAlignment,
+  WriterError,
+  WriterEvent,
+  WriterFormat,
+} from "./protocol";
 
 export class WriterState {
   ready = $state(false);
@@ -6,9 +14,15 @@ export class WriterState {
   requiresSaveAs = $state(false);
   failure = $state<WriterError | null>(null);
   engineVersion = $state<string | null>(null);
+  pageLabel = $state("");
+  pageTooltip = $state("");
+  wordCountLabel = $state("");
+  trackChangesEnabled = $state(false);
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
+  fontFamily = $state("");
+  fontSize = $state<number | null>(null);
   alignment = $state<ParagraphAlignment>("left");
   bullets = $state(false);
   numbering = $state(false);
@@ -17,6 +31,9 @@ export class WriterState {
   footerEnabled = $state(false);
   differentFirstPage = $state(false);
   differentOddEven = $state(false);
+  orientation = $state<PageOrientation>("portrait");
+  marginPreset = $state<PageMarginPreset>("normal");
+  paperSize = $state<PagePaperSize>("letter");
   fileName = $state("Document1.docx");
   filePath = $state<string | null>(null);
   format = $state<WriterFormat>("docx");
@@ -31,10 +48,20 @@ export class WriterState {
       case "document.changed":
         this.dirty = this.requiresSaveAs || event.payload.dirty;
         break;
+      case "document.statistics":
+        this.pageLabel = event.payload.pageLabel;
+        this.pageTooltip = event.payload.pageTooltip;
+        this.wordCountLabel = event.payload.wordCountLabel;
+        break;
+      case "review.state":
+        this.trackChangesEnabled = event.payload.trackChangesEnabled;
+        break;
       case "selection.formatting":
         this.bold = event.payload.bold;
         this.italic = event.payload.italic;
         this.underline = event.payload.underline;
+        this.fontFamily = event.payload.fontFamily;
+        this.fontSize = event.payload.fontSize;
         break;
       case "selection.paragraph":
         this.alignment = event.payload.alignment;
@@ -47,6 +74,9 @@ export class WriterState {
         this.footerEnabled = event.payload.footerEnabled;
         this.differentFirstPage = event.payload.differentFirstPage;
         this.differentOddEven = event.payload.differentOddEven;
+        this.orientation = event.payload.orientation;
+        this.marginPreset = event.payload.marginPreset;
+        this.paperSize = event.payload.paperSize;
         break;
       case "engine.failure":
         this.ready = false;
