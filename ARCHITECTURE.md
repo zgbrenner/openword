@@ -11,6 +11,21 @@ The project has two non-negotiable product principles:
 
 The original promise of an extremely small editor engine was incompatible with Writer-level document fidelity. OpenWord still keeps its Tauri and Svelte shell disciplined, local, and modular, but it does not misrepresent a full Writer runtime as tiny.
 
+## Shipping state
+
+The Writer engine described in the rest of this document is the **target** architecture, not what ships today.
+
+The Writer runtime is a Writer-only LibreOffice WebAssembly build. It is not in this repository, and `engine/README.md` documents why: reproducing it needs a Linux x86_64 host with roughly 64 GiB of RAM for the link step, and it deliberately does not run on GitHub-hosted CI runners. Until that runtime exists as a distributable artifact, a package built from this repository contains a Writer shell that cannot open a document.
+
+Rather than ship a word processor that cannot process words, OpenWord currently ships the ProseMirror editor that predates the Writer decision. Both shells live in the same build and are selected at runtime by `src/lib/shellMode.ts`:
+
+- **`editor` (default).** The ProseMirror document model, the custom DOCX filters in `src/docx/`, and the measure-and-decorate pagination system. Pure JavaScript, a few hundred kilobytes, no external artifact. This is what a released installer runs.
+- **`writer` (opt-in, `?shell=writer`).** The full Writer bridge described below. It starts only where a verified runtime has been installed into `public/writer-runtime/`; otherwise it shows the engine-failure screen.
+
+The two shells share the Tauri shell, the platform abstraction, the dialog layer, and the crash-recovery store. They do not share a document model, and no document is ever silently handed from one to the other: recovery snapshots are tagged with their format and each shell ignores the other's.
+
+The product principles above are unchanged. Writer remains the destination; the ProseMirror shell is what makes the project usable on the way there, and it is a supported shipping path rather than dead migration code.
+
 ## Architecture decision
 
 OpenWord embeds a Writer-only LibreOffice WebAssembly build, commonly called LOWA, in the Tauri webview. `zetajs` exposes LibreOffice's UNO APIs to a worker-side OpenWord bridge. The Svelte application communicates with that bridge through a typed semantic protocol.
@@ -43,7 +58,7 @@ OpenWord desktop application
     └── PDF and print-layout systems
 ```
 
-There is no fallback editing engine. Startup failure produces an explicit recovery screen rather than silently opening the document in a lower-fidelity mode.
+Within the Writer shell there is no fallback editing engine: startup failure produces an explicit recovery screen rather than silently opening the document in a lower-fidelity mode. Falling back to the ProseMirror shell is a deliberate user action (`?shell=editor`), never an automatic downgrade, so a document is never quietly reinterpreted by a different model.
 
 ## Why Writer rather than extending ProseMirror
 
@@ -55,7 +70,9 @@ The initial OpenWord prototype used ProseMirror with a custom schema, custom DOC
 - High-fidelity DOCX and ODT round trips require mature import/export filters and interoperability metadata.
 - Recreating Writer's feature surface would mean rebuilding decades of document-engine work.
 
-The ProseMirror editor is therefore retired. Its code remains temporarily only for the one-way `.owdoc` migration importer. It must not be referenced by new editing features.
+Those limits are real and none of them have gone away. They are the reason Writer is still the destination.
+
+They are also not reasons to ship nothing. The ProseMirror editor remains the shipping shell until the Writer runtime is distributable, so it is maintained rather than retired: bug fixes, data-safety work, and interface changes that keep the two shells coherent all belong there. What does not belong there is new document-model ambition — features that need real line-level layout, sections, footnotes, frames, or filter-grade fidelity should wait for Writer rather than be approximated a second time.
 
 ## Runtime hosting
 
@@ -209,6 +226,8 @@ Section-specific Word behavior remains a translation problem. New implementation
 
 ### Supported editable formats
 
+Under the Writer shell:
+
 - DOCX is the default for new general-purpose documents.
 - ODT is a first-class native format.
 - Existing documents retain their format on Save.
@@ -216,9 +235,15 @@ Section-specific Word behavior remains a translation problem. New implementation
 
 Additional Writer formats are not exposed until reopen and fidelity fixtures prove acceptable behavior.
 
-### Legacy `.owdoc`
+Under the shipping ProseMirror shell the set is narrower, and the interface must not offer more than this:
 
-`.owdoc` is not an editable Writer format.
+- DOCX, through the custom filters in `src/docx/`. Fidelity is this repository's own mapping, not a Writer filter; `README.md` documents what round-trips, what is dropped, and what silently changes.
+- `.owdoc`, the lossless ProseMirror envelope, which is the native format for this shell rather than a legacy one.
+- ODT is **not** supported and is not registered as a file association.
+
+### `.owdoc`
+
+`.owdoc` is the ProseMirror shell's native format and is read and written directly by it. It is not an editable Writer format, so the Writer shell treats it as a migration input only.
 
 The quarantined migration importer:
 
@@ -398,14 +423,14 @@ engine/                         pinned source lock and runtime build system
 public/writer-runtime/          generated LOWA files and committed policies
 src/platform/                   desktop (Tauri) and web (browser-storage) backends
 src/writer/                     bridge, lifecycle, package fidelity, recovery
-src/components/                 OpenWord interface around Writer
-src/editor/ and src/docx/       temporary legacy migration-only implementation
+src/components/                 OpenWord interface: EditorShell (shipping) and the Writer surface
+src/editor/ and src/docx/       ProseMirror document model and DOCX filters (shipping shell)
 src-tauri/                      native shell and local security boundary
 tests/writer/                   Writer contracts and fidelity tests
 docs/superpowers/               approved specifications and plans
 ```
 
-New editing behavior belongs in `src/writer/`, the Writer worker policies, or the pinned Writer-core fork. It must not extend the retired ProseMirror editor.
+New Writer-track editing behavior belongs in `src/writer/`, the Writer worker policies, or the pinned Writer-core fork. Work on the shipping shell belongs in `src/editor/`, `src/docx/`, and `src/components/EditorShell.svelte`, and should stay inside the fidelity envelope that shell can honestly support.
 
 ## Licensing
 
