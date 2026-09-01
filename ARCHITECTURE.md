@@ -147,10 +147,16 @@ The bridge publishes authoritative events for:
 - engine readiness and failure
 - document dirty state
 - character formatting
-- paragraph alignment and list state
+- paragraph alignment, list state, and paragraph style
 - active page style
 - header and footer state
+- view zoom
 - future table, image, field, review, and section contexts
+
+Search runs through dedicated request methods (`search.find`,
+`search.replaceNext`, `search.replaceAll`) that wrap Writer's search and
+replace descriptors and return authoritative results (wrap-around, replace
+counts) instead of the UI guessing.
 
 Request IDs, timeouts, error codes, and teardown behavior are centralized in `WriterClient`.
 

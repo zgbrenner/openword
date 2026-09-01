@@ -1,5 +1,18 @@
 export type WriterFormat = "docx" | "odt";
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
+
+/**
+ * Word-facing quick styles. The worker maps each key onto the corresponding
+ * Writer paragraph style name and refuses anything outside this list.
+ */
+export type ParagraphQuickStyle =
+  | "normal"
+  | "title"
+  | "subtitle"
+  | "heading1"
+  | "heading2"
+  | "heading3"
+  | "quote";
 export type PageOrientation = "portrait" | "landscape";
 export type PageMarginPreset = "normal" | "narrow" | "moderate" | "wide" | "custom";
 export type PagePaperSize = "letter" | "a4" | "legal" | "custom";
@@ -8,8 +21,14 @@ export type WriterCommand =
   | { type: "format.toggleBold" }
   | { type: "format.toggleItalic" }
   | { type: "format.toggleUnderline" }
+  | { type: "format.toggleStrikethrough" }
+  | { type: "format.toggleSubscript" }
+  | { type: "format.toggleSuperscript" }
+  | { type: "format.clearFormatting" }
   | { type: "format.setFontFamily"; fontFamily: string }
   | { type: "format.setFontSize"; fontSize: number }
+  | { type: "paragraph.applyStyle"; style: ParagraphQuickStyle }
+  | { type: "view.setZoom"; percent: number }
   | { type: "history.undo" }
   | { type: "history.redo" }
   | { type: "paragraph.alignLeft" }
@@ -50,7 +69,35 @@ export type WriterRequestMethod =
   | "document.save"
   | "document.snapshot"
   | "document.exportPdf"
-  | "command.execute";
+  | "command.execute"
+  | "search.find"
+  | "search.replaceNext"
+  | "search.replaceAll";
+
+export interface WriterSearchOptions {
+  query: string;
+  matchCase: boolean;
+  wholeWords: boolean;
+  backwards?: boolean;
+}
+
+export interface WriterReplaceOptions extends WriterSearchOptions {
+  replacement: string;
+}
+
+/** Result of a single find step; `wrapped` means the search passed the document edge. */
+export interface WriterFindResult {
+  found: boolean;
+  wrapped: boolean;
+}
+
+export interface WriterReplaceNextResult extends WriterFindResult {
+  replaced: boolean;
+}
+
+export interface WriterReplaceAllResult {
+  replaced: number;
+}
 
 export interface WriterRequest {
   kind: "request";
@@ -95,6 +142,9 @@ export type WriterEvent =
         bold: boolean;
         italic: boolean;
         underline: boolean;
+        strikethrough: boolean;
+        subscript: boolean;
+        superscript: boolean;
         fontFamily: string;
         fontSize: number | null;
       };
@@ -102,8 +152,14 @@ export type WriterEvent =
   | {
       kind: "event";
       event: "selection.paragraph";
-      payload: { alignment: ParagraphAlignment; bullets: boolean; numbering: boolean };
+      payload: {
+        alignment: ParagraphAlignment;
+        bullets: boolean;
+        numbering: boolean;
+        styleName: string;
+      };
     }
+  | { kind: "event"; event: "view.zoom"; payload: { percent: number } }
   | {
       kind: "event";
       event: "selection.pageStyle";

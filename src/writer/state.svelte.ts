@@ -21,11 +21,16 @@ export class WriterState {
   bold = $state(false);
   italic = $state(false);
   underline = $state(false);
+  strikethrough = $state(false);
+  subscript = $state(false);
+  superscript = $state(false);
   fontFamily = $state("");
   fontSize = $state<number | null>(null);
   alignment = $state<ParagraphAlignment>("left");
   bullets = $state(false);
   numbering = $state(false);
+  paragraphStyleName = $state("");
+  zoomPercent = $state(100);
   pageStyleName = $state("Default Page Style");
   headerEnabled = $state(false);
   footerEnabled = $state(false);
@@ -60,6 +65,9 @@ export class WriterState {
         this.bold = event.payload.bold;
         this.italic = event.payload.italic;
         this.underline = event.payload.underline;
+        this.strikethrough = event.payload.strikethrough;
+        this.subscript = event.payload.subscript;
+        this.superscript = event.payload.superscript;
         this.fontFamily = event.payload.fontFamily;
         this.fontSize = event.payload.fontSize;
         break;
@@ -67,6 +75,10 @@ export class WriterState {
         this.alignment = event.payload.alignment;
         this.bullets = event.payload.bullets;
         this.numbering = event.payload.numbering;
+        this.paragraphStyleName = event.payload.styleName;
+        break;
+      case "view.zoom":
+        this.zoomPercent = event.payload.percent;
         break;
       case "selection.pageStyle":
         this.pageStyleName = event.payload.pageStyleName;

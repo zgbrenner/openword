@@ -17,7 +17,10 @@ Implemented on the Writer foundation branch:
 - Writer-native line-level pagination and page layout
 - DOCX and ODT open, save, Save As, autosave, and generation-safe recovery plumbing
 - Header and footer enablement, current-region editing, Different First Page, and Different Odd & Even behavior through Writer page styles
-- Bold, italic, underline, paragraph alignment, bullets, numbering, undo, redo, and page breaks
+- Bold, italic, underline, strikethrough, subscript, superscript, clear formatting, paragraph alignment, bullets, numbering, undo, redo, and page breaks
+- Find & Replace with match case and whole-word options, backed by Writer's search descriptors
+- Paragraph quick styles (Normal, Headings, Title, Subtitle, Quote) mapped onto real Writer paragraph styles
+- A Word-style zoom control driving Writer's authoritative view zoom
 - Conservative package passthrough for opaque DOCX and ODT ZIP parts
 - DOCX relationship/content-type and ODT manifest repair for restored or removed parts
 - Compatibility reporting for restored data, Writer conflicts, invalidated signatures, blocked executable payloads, and cross-format omissions
