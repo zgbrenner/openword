@@ -1,0 +1,39 @@
+{
+  "name": "OpenWord",
+  "short_name": "OpenWord",
+  "description": "A local-first, open-source word processor built around one document engine: LibreOffice Writer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfbfd",
+  "theme_color": "#fbfbfd",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+        "application/vnd.oasis.opendocument.text": [".odt"],
+        "application/x-openword": [".owdoc"]
+      }
+    }
+  ]
+}

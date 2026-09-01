@@ -2,10 +2,16 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { ask, message } from "@tauri-apps/plugin-dialog";
+  import AppDialog from "@/components/AppDialog.svelte";
+  import WebMenuBar from "@/components/WebMenuBar.svelte";
   import WriterCanvas from "@/components/WriterCanvas.svelte";
   import WriterHomeBar from "@/components/WriterHomeBar.svelte";
   import WriterStatusBar from "@/components/WriterStatusBar.svelte";
+  import { registerOpenWordServiceWorker } from "@/lib/serviceWorkerClient";
+  import { shortcutMenuAction } from "@/lib/webShortcuts";
+  import { isTauri } from "@/lib/tauriEnv";
+  import { getPlatform } from "@/platform";
+  import { registerWebDocumentHandle } from "@/platform/web/webPlatform";
   import { WriterClient } from "@/writer/client";
   import {
     exportWriterPdfDialog,
@@ -29,8 +35,8 @@
   } from "@/writer/recovery";
   import { WriterRuntimeHost } from "@/writer/runtimeHost";
   import { WriterState } from "@/writer/state.svelte";
-  import { isTauri } from "@/lib/tauriEnv";
 
+  const platform = getPlatform();
   const writerState = new WriterState();
   let client = $state<WriterClient | null>(null);
   let runtimeHost = $state<WriterRuntimeHost | null>(null);
@@ -54,7 +60,7 @@
 
   async function confirmDiscard(action: string): Promise<boolean> {
     if (!writerState.dirty) return true;
-    return ask(`You have unsaved changes. Discard them and ${action}?`, { title: "OpenWord" });
+    return platform.ask(`You have unsaved changes. Discard them and ${action}?`, { title: "OpenWord" });
   }
 
   function applyOpenResult(result: WriterOpenResult): void {
@@ -64,7 +70,7 @@
   }
 
   async function clearRecoveryAfterDiscard(): Promise<void> {
-    if (isTauri()) await clearRecoverySnapshot().catch(() => {});
+    await clearRecoverySnapshot().catch(() => {});
   }
 
   async function openAtPath(path: string): Promise<void> {
@@ -113,8 +119,7 @@
   async function reportRetainedBackup(result: { recoveryPath: string | null }): Promise<void> {
     if (!result.recoveryPath) return;
     const detail = `The file was written, but OpenWord could not remove the prior-file backup at:\n${result.recoveryPath}`;
-    if (isTauri()) await message(detail, { title: "Backup retained", kind: "warning" });
-    else console.warn(detail);
+    await platform.message(detail, { title: "Backup retained", kind: "warning" });
   }
 
   async function reportCompatibility(result: WriterSaveResult): Promise<void> {
@@ -134,9 +139,7 @@
     lines.push(...report.warnings);
     if (!lines.length) return;
 
-    const detail = lines.join("\n");
-    if (isTauri()) await message(detail, { title: "Document compatibility", kind: "warning" });
-    else console.warn(detail);
+    await platform.message(lines.join("\n"), { title: "Document compatibility", kind: "warning" });
   }
 
   async function doSave(): Promise<void> {
@@ -202,7 +205,7 @@
 
   async function persistRecovery(): Promise<void> {
     const writer = requireWriter();
-    if (!isTauri() || !writer || !writerState.dirty || recoveryInFlight) return;
+    if (!writer || !writerState.dirty || recoveryInFlight) return;
     recoveryInFlight = true;
     try {
       await writeRecoverySnapshot(writer.client, writer.host, {
@@ -222,11 +225,10 @@
     nextClient: WriterClient,
     nextHost: WriterRuntimeHost,
   ): Promise<boolean> {
-    if (!isTauri()) return false;
     const snapshot = await readRecoverySnapshot().catch(() => null);
     if (!snapshot) return false;
 
-    const restore = await ask(
+    const restore = await platform.ask(
       `OpenWord found unsaved work from ${new Date(snapshot.metadata.createdAt).toLocaleString()}. Restore it?`,
       { title: "Recover document" },
     );
@@ -253,14 +255,12 @@
 
   async function showError(title: string, error: unknown): Promise<void> {
     const detail = error instanceof Error ? error.message : String(error);
-    if (isTauri()) await message(detail, { title, kind: "error" });
-    else window.alert(`${title}\n\n${detail}`);
+    await platform.message(detail, { title, kind: "error" });
   }
 
   async function unavailable(feature: string): Promise<void> {
     const detail = `${feature} is not wired to the Writer engine in this foundation build yet.`;
-    if (isTauri()) await message(detail, { title: "OpenWord" });
-    else window.alert(detail);
+    await platform.message(detail, { title: "OpenWord" });
   }
 
   async function execute(command: WriterCommand): Promise<void> {
@@ -276,8 +276,7 @@
 
   async function showWordCount(): Promise<void> {
     const detail = writerState.wordCountLabel || "Writer is calculating the document statistics.";
-    if (isTauri()) await message(detail, { title: "Word count" });
-    else window.alert(detail);
+    await platform.message(detail, { title: "Word count" });
   }
 
   async function handleMenuAction(id: string): Promise<void> {
@@ -303,9 +302,10 @@
       case "format_ordered_list": return execute({ type: "list.toggleNumbering" });
       case "tools_word_count": return showWordCount();
       case "help_about":
-        if (isTauri()) {
-          await message("OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.", { title: "OpenWord" });
-        }
+        await platform.message(
+          "OpenWord Writer foundation build. One local LibreOffice Writer engine; macros and extensions are disabled.",
+          { title: "OpenWord" },
+        );
         return;
       default:
         return unavailable(id.replaceAll("_", " "));
@@ -342,15 +342,14 @@
     }
   }
 
-  onMount(() => {
-    if (!isTauri()) return;
-
+  // The native shell delivers menu actions, "open with" paths, and the
+  // close-confirmation flow through Tauri events and window hooks.
+  function mountDesktopShell(): () => void {
     const unlistenMenu = listen<string>("menu:action", (event) => void handleMenuAction(event.payload));
     const unlistenOpen = listen<string[]>("file:open-path", (event) => {
       const path = event.payload[0];
       if (path) void openAtPath(path);
     });
-    const autosave = window.setInterval(() => void persistRecovery(), 20_000);
 
     let unlistenClose: (() => void) | undefined;
     getCurrentWindow()
@@ -358,12 +357,12 @@
         if (!writerState.dirty) return;
         event.preventDefault();
         await persistRecovery();
-        const discard = await ask(
+        const discard = await platform.ask(
           "You have unsaved changes. Quit without saving? A recovery snapshot is available unless you choose to discard it.",
           { title: "OpenWord" },
         );
         if (discard) {
-          const keepRecovery = await ask(
+          const keepRecovery = await platform.ask(
             "Keep the recovery snapshot for the next launch?",
             { title: "OpenWord recovery", kind: "warning" },
           );
@@ -377,7 +376,60 @@
       unlistenMenu.then((fn) => fn());
       unlistenOpen.then((fn) => fn());
       unlistenClose?.();
+    };
+  }
+
+  // The website version wires the same menu-action ids through the in-app
+  // menu bar and a keyboard accelerator layer, replaces the native close
+  // hook with beforeunload, flushes recovery when the tab is hidden, and
+  // accepts OS documents through the installed-app launch queue.
+  function mountWebShell(): () => void {
+    void registerOpenWordServiceWorker();
+
+    const onKeydown = (event: KeyboardEvent) => {
+      const action = shortcutMenuAction(event);
+      if (!action) return;
+      event.preventDefault();
+      void handleMenuAction(action);
+    };
+    window.addEventListener("keydown", onKeydown, { capture: true });
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!writerState.dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    const flushRecovery = () => {
+      if (document.visibilityState === "hidden") void persistRecovery();
+    };
+    document.addEventListener("visibilitychange", flushRecovery);
+    window.addEventListener("pagehide", flushRecovery);
+
+    window.launchQueue?.setConsumer((params) => {
+      const handle = params.files[0];
+      if (handle?.kind !== "file") return;
+      void registerWebDocumentHandle(handle as FileSystemFileHandle)
+        .then((path) => openAtPath(path))
+        .catch((error) => void showError("Could not open document", error));
+    });
+
+    return () => {
+      window.removeEventListener("keydown", onKeydown, { capture: true });
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("visibilitychange", flushRecovery);
+      window.removeEventListener("pagehide", flushRecovery);
+    };
+  }
+
+  onMount(() => {
+    const autosave = window.setInterval(() => void persistRecovery(), 20_000);
+    const unmountShell = isTauri() ? mountDesktopShell() : mountWebShell();
+
+    return () => {
       window.clearInterval(autosave);
+      unmountShell();
       unsubscribeWriter?.();
       client?.destroy();
       runtimeHost?.destroy();
@@ -386,6 +438,9 @@
 </script>
 
 <div class="ow-app">
+  {#if !isTauri()}
+    <WebMenuBar onaction={(id) => void handleMenuAction(id)} />
+  {/if}
   <WriterHomeBar
     {client}
     state={writerState}
@@ -399,6 +454,7 @@
     />
   </main>
   <WriterStatusBar state={writerState} report={compatibilityReport} />
+  <AppDialog />
 </div>
 
 <style>
