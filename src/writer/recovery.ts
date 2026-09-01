@@ -1,41 +1,18 @@
-import { appDataDir } from "@tauri-apps/api/path";
-import {
-  exists,
-  mkdir,
-  readFile,
-  readTextFile,
-  remove,
-  rename,
-  writeFile,
-  writeTextFile,
-} from "@tauri-apps/plugin-fs";
+import { getPlatform } from "@/platform";
+import type { RecoveryMetadata, RecoverySnapshot } from "@/platform";
 import type { WriterClient } from "./client";
 import {
   mergeWriterPackage,
   type PackagePreservationSnapshot,
 } from "./packagePassthrough";
-import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
-export interface RecoveryMetadata {
-  version: 1;
-  generation: string;
-  createdAt: string;
-  fileName: string;
-  originalPath: string | null;
-  format: WriterFormat;
-  documentFile: string;
-}
-
-export interface RecoverySnapshot {
-  metadata: RecoveryMetadata;
-  bytes: Uint8Array;
-}
+export type { RecoveryMetadata, RecoverySnapshot } from "@/platform";
 
 export interface RecoverySource {
   fileName: string;
   originalPath: string | null;
-  format: WriterFormat;
+  format: RecoveryMetadata["format"];
   preservation: PackagePreservationSnapshot | null;
 }
 
@@ -50,53 +27,15 @@ function generationId(): string {
   return suffix.replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-async function recoveryDirectory(): Promise<string> {
-  const directory = `${await appDataDir()}/recovery`;
-  if (!(await exists(directory))) await mkdir(directory, { recursive: true });
-  return directory;
-}
-
-async function readCurrentMetadata(directory: string): Promise<RecoveryMetadata | null> {
-  const pointerPath = `${directory}/current.json`;
-  if (!(await exists(pointerPath))) return null;
-  try {
-    const parsed = JSON.parse(await readTextFile(pointerPath)) as RecoveryMetadata;
-    if (
-      parsed?.version !== 1 ||
-      typeof parsed.generation !== "string" ||
-      typeof parsed.documentFile !== "string" ||
-      (parsed.format !== "docx" && parsed.format !== "odt")
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function replacePointer(directory: string, content: string): Promise<void> {
-  const pointerPath = `${directory}/current.json`;
-  const stagedPath = `${pointerPath}.tmp`;
-  const backupPath = `${pointerPath}.backup`;
-
-  if (await exists(stagedPath)) await remove(stagedPath);
-  if (await exists(backupPath)) await remove(backupPath);
-  await writeTextFile(stagedPath, content);
-
-  const hadPointer = await exists(pointerPath);
-  if (hadPointer) await rename(pointerPath, backupPath);
-  try {
-    await rename(stagedPath, pointerPath);
-  } catch (error) {
-    if (hadPointer && !(await exists(pointerPath)) && (await exists(backupPath))) {
-      await rename(backupPath, pointerPath).catch(() => {});
-    }
-    throw error;
-  }
-  if (hadPointer && (await exists(backupPath))) await remove(backupPath);
-}
-
+/**
+ * Snapshots the live document through Writer's storeToURL (which neither
+ * changes document identity nor clears the modified state), applies the same
+ * package-preservation treatment as a user save, and hands the generation to
+ * the platform recovery store. Each backend guarantees that a crash leaves
+ * either the previous complete snapshot or the new one — the desktop store
+ * with staged files and an atomic pointer swap, the web store with a single
+ * atomic browser-storage transaction.
+ */
 export async function writeRecoverySnapshot(
   client: WriterClient,
   host: WriterRuntimeHost,
@@ -115,11 +54,6 @@ export async function writeRecoverySnapshot(
   const merged = await mergeWriterPackage(bytes, source.format, source.preservation);
   bytes = merged.bytes;
 
-  const directory = await recoveryDirectory();
-  const previous = await readCurrentMetadata(directory);
-  const documentFile = `${generation}.${source.format}`;
-  const documentPath = `${directory}/${documentFile}`;
-  const stagedDocumentPath = `${documentPath}.tmp`;
   const metadata: RecoveryMetadata = {
     version: 1,
     generation,
@@ -127,37 +61,17 @@ export async function writeRecoverySnapshot(
     fileName: source.fileName,
     originalPath: source.originalPath,
     format: source.format,
-    documentFile,
+    documentFile: `${generation}.${source.format}`,
   };
 
-  if (await exists(stagedDocumentPath)) await remove(stagedDocumentPath);
-  await writeFile(stagedDocumentPath, bytes);
-  await rename(stagedDocumentPath, documentPath);
-  await replacePointer(directory, `${JSON.stringify(metadata, null, 2)}\n`);
-
-  if (previous && previous.documentFile !== documentFile) {
-    const previousPath = `${directory}/${previous.documentFile}`;
-    if (await exists(previousPath)) await remove(previousPath).catch(() => {});
-  }
+  await getPlatform().recovery.write(metadata, bytes);
   return metadata;
 }
 
 export async function readRecoverySnapshot(): Promise<RecoverySnapshot | null> {
-  const directory = await recoveryDirectory();
-  const metadata = await readCurrentMetadata(directory);
-  if (!metadata) return null;
-  const documentPath = `${directory}/${metadata.documentFile}`;
-  if (!(await exists(documentPath))) return null;
-  return { metadata, bytes: await readFile(documentPath) };
+  return getPlatform().recovery.read();
 }
 
 export async function clearRecoverySnapshot(): Promise<void> {
-  const directory = await recoveryDirectory();
-  const metadata = await readCurrentMetadata(directory);
-  const pointerPath = `${directory}/current.json`;
-  if (metadata) {
-    const documentPath = `${directory}/${metadata.documentFile}`;
-    if (await exists(documentPath)) await remove(documentPath).catch(() => {});
-  }
-  if (await exists(pointerPath)) await remove(pointerPath);
+  return getPlatform().recovery.clear();
 }

@@ -1,6 +1,4 @@
-import { basename } from "@tauri-apps/api/path";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { exists, readFile, readTextFile, remove, rename, writeFile } from "@tauri-apps/plugin-fs";
+import { getPlatform } from "@/platform";
 import type { WriterClient } from "./client";
 import {
   capturePackage,
@@ -12,7 +10,7 @@ import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
 export interface LegacyMigrationInfo {
-  sourcePath: string;
+  sourcePath: string | null;
   sourceName: string;
   message: string;
 }
@@ -73,10 +71,25 @@ export async function openWriterDocumentDialog(
   client: WriterClient,
   host: WriterRuntimeHost,
 ): Promise<WriterOpenResult | null> {
-  const selected = await open({ multiple: false, filters: OPEN_FILTERS });
-  const path = Array.isArray(selected) ? selected[0] : selected;
-  if (!path) return null;
-  return openWriterDocumentAtPath(path, client, host);
+  const pick = await getPlatform().pickOpenDocument(OPEN_FILTERS);
+  if (!pick) return null;
+  if (pick.kind === "path") return openWriterDocumentAtPath(pick.path, client, host);
+
+  // The platform could only produce bytes (plain file-input fallback), so
+  // there is no writable location to save back to: the document opens
+  // detached and requires Save As, exactly like legacy migration.
+  if (/\.owdoc$/i.test(pick.name)) {
+    return migrateLegacyOwDocContent(
+      new TextDecoder().decode(pick.bytes),
+      pick.name,
+      null,
+      client,
+      host,
+    );
+  }
+  const format = formatFromPath(pick.name);
+  const preservation = await openWriterDocumentBytes(pick.bytes, format, client, host);
+  return { path: null, name: pick.name, format, preservation };
 }
 
 export async function openWriterDocumentBytes(
@@ -101,8 +114,19 @@ async function migrateLegacyOwDoc(
   client: WriterClient,
   host: WriterRuntimeHost,
 ): Promise<WriterOpenResult> {
-  const sourceName = await basename(path);
-  const text = await readTextFile(path);
+  const platform = getPlatform();
+  const sourceName = await platform.documentDisplayName(path);
+  const text = await platform.readDocumentText(path);
+  return migrateLegacyOwDocContent(text, sourceName, path, client, host);
+}
+
+async function migrateLegacyOwDocContent(
+  text: string,
+  sourceName: string,
+  sourcePath: string | null,
+  client: WriterClient,
+  host: WriterRuntimeHost,
+): Promise<WriterOpenResult> {
   const [{ parseOwDoc }, { exportDocx }] = await Promise.all([
     import("@/editor/document"),
     import("@/docx/export"),
@@ -119,7 +143,7 @@ async function migrateLegacyOwDoc(
     format: "docx",
     preservation,
     migration: {
-      sourcePath: path,
+      sourcePath,
       sourceName,
       message: "This legacy OpenWord document was converted into Writer and must be saved as DOCX or ODT.",
     },
@@ -133,10 +157,11 @@ export async function openWriterDocumentAtPath(
 ): Promise<WriterOpenResult> {
   if (/\.owdoc$/i.test(path)) return migrateLegacyOwDoc(path, client, host);
 
+  const platform = getPlatform();
   const format = formatFromPath(path);
-  const bytes = await readFile(path);
+  const bytes = await platform.readDocument(path);
   const preservation = await openWriterDocumentBytes(bytes, format, client, host);
-  return { path, name: await basename(path), format, preservation };
+  return { path, name: await platform.documentDisplayName(path), format, preservation };
 }
 
 export async function saveWriterDocumentAsDialog(
@@ -145,12 +170,13 @@ export async function saveWriterDocumentAsDialog(
   suggestedBaseName = "Document1",
   preservation: PackagePreservationSnapshot | null = null,
 ): Promise<WriterSaveResult | null> {
-  const path = await save({
-    defaultPath: `${suggestedBaseName}.docx`,
+  const path = await getPlatform().pickSaveDocument({
+    defaultBaseName: suggestedBaseName,
     filters: [
       { name: "Word Document", extensions: ["docx"] },
       { name: "OpenDocument Text", extensions: ["odt"] },
     ],
+    webFallback: "browser-storage",
   });
   if (!path) return null;
   return saveWriterDocument(path, formatFromPath(path), client, host, preservation);
@@ -190,9 +216,10 @@ export async function exportWriterPdfDialog(
   host: WriterRuntimeHost,
   suggestedBaseName = "Document1",
 ): Promise<WriterPdfExportResult | null> {
-  const targetPath = await save({
-    defaultPath: `${suggestedBaseName}.pdf`,
+  const targetPath = await getPlatform().pickSaveDocument({
+    defaultBaseName: suggestedBaseName,
     filters: [{ name: "PDF Document", extensions: ["pdf"] }],
+    webFallback: "download",
   });
   if (!targetPath) return null;
 
@@ -211,37 +238,13 @@ export async function exportWriterPdfDialog(
 }
 
 /**
- * Writes the complete new document beside the target before touching the
- * original. A failed replacement restores the original when possible and
- * deliberately retains the staged file so the new bytes remain recoverable.
+ * Atomically replaces the target document through the platform backend: the
+ * desktop shell writes a complete staged file beside the target before any
+ * rename touches the original, and the web backend's writable streams commit
+ * a complete swap file on close. Either way the previous document survives
+ * any failure, and a retained desktop backup path is reported to the caller.
  */
 async function replaceWithStagedFile(targetPath: string, bytes: Uint8Array): Promise<string | null> {
-  const token = operationToken();
-  const stagedPath = `${targetPath}.openword-tmp-${token}`;
-  const backupPath = `${targetPath}.openword-backup-${token}`;
-  const hadOriginal = await exists(targetPath);
-
-  await writeFile(stagedPath, bytes);
-  if (hadOriginal) await rename(targetPath, backupPath);
-
-  try {
-    await rename(stagedPath, targetPath);
-  } catch (error) {
-    if (hadOriginal && !(await exists(targetPath)) && (await exists(backupPath))) {
-      await rename(backupPath, targetPath).catch(() => {});
-    }
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not replace ${targetPath}. New document bytes remain at ${stagedPath}. ${detail}`);
-  }
-
-  if (hadOriginal && (await exists(backupPath))) {
-    try {
-      await remove(backupPath);
-    } catch {
-      // The target is saved correctly. Retain the old file and report its
-      // location instead of turning successful persistence into an error.
-      return backupPath;
-    }
-  }
-  return null;
+  const result = await getPlatform().replaceDocument(targetPath, bytes);
+  return result.retainedBackupPath;
 }
