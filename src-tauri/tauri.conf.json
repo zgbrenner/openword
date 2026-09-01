@@ -33,7 +33,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "publisher": "OpenWord contributors",
+    "homepage": "https://github.com/zgbrenner/openword",
+    "copyright": "Copyright © 2026 OpenWord contributors. Licensed under the Apache License, Version 2.0.",
+    "license": "Apache-2.0",
+    "licenseFile": "../LICENSE",
+    "category": "Productivity",
+    "shortDescription": "A free, open-source, genuinely lightweight word processor.",
+    "longDescription": "OpenWord is a local-first word processor. It opens, edits and saves Word (.docx) documents entirely on your own machine, with pagination, tables, images, comments and tracked changes. The application makes no network requests of any kind: there is no telemetry, no account, and no cloud service behind it.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,23 +54,43 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["owdoc"],
-        "name": "Legacy OpenWord Document",
-        "description": "Legacy OpenWord document for migration",
+        "ext": [
+          "owdoc"
+        ],
+        "name": "OpenWord.owdoc",
+        "description": "Legacy OpenWord Document",
         "role": "Editor"
       },
       {
-        "ext": ["docx"],
-        "name": "Word Document",
-        "description": "Microsoft Word document",
-        "role": "Editor"
-      },
-      {
-        "ext": ["odt"],
-        "name": "OpenDocument Text",
-        "description": "OpenDocument text document",
+        "ext": [
+          "docx"
+        ],
+        "name": "OpenWord.docx",
+        "description": "Microsoft Word Document",
         "role": "Editor"
       }
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "allowDowngrades": true,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    }
   }
 }

@@ -47,6 +47,11 @@ test("native shell routes legacy files through the shared supported-document pre
   assert.match(rust, /fn is_supported_document_path\(path: &str\) -> bool/);
   assert.match(rust, /Some\("docx" \| "odt" \| "owdoc"\)/);
   assert.match(rust, /filter\(\|argument\| is_supported_document_path\(argument\)\)/);
-  assert.match(config, /"ext": \["owdoc"\]/);
-  assert.match(config, /Legacy OpenWord Document/);
+  // Asserted against the parsed bundle rather than the raw text: what matters
+  // is that .owdoc is still associated and still labelled legacy, not how the
+  // packaging config happens to be wrapped.
+  const associations = JSON.parse(config).bundle?.fileAssociations ?? [];
+  const owdoc = associations.find((association) => association.ext?.includes("owdoc"));
+  assert.ok(owdoc, "the bundle must keep the .owdoc association for legacy migration");
+  assert.match(`${owdoc.name} ${owdoc.description}`, /Legacy OpenWord Document/);
 });
