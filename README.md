@@ -168,8 +168,10 @@ Some things survive but change on the way through:
 - Indents are rounded to quarter-inch steps
 - WebP, TIFF and SVG images open fine but are dropped when you save
 
-> **If OpenWord can't read a `.docx`, it opens an empty document instead of
-> reporting an error.** Don't save over a file that came up unexpectedly blank.
+> **The first time you save a document you opened from `.docx`, OpenWord warns
+> you** and offers to save it as `.owdoc` instead, which keeps everything above.
+> If OpenWord cannot read a `.docx` at all, it tells you so and refuses to open
+> it, rather than showing you a blank page you might save over.
 
 Treat `.docx` as an exchange format: fine for drafting and sharing plain
 documents, not a safe home for a heavily formatted one. Keep the original.

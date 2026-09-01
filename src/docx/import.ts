@@ -1,10 +1,19 @@
 // DOCX import: reads a .docx (OOXML-in-a-zip) file with JSZip + DOMParser and
-// builds an OpenWord ProseMirror document. This is a best-effort v1 converter
-// — unrecognized XML is skipped, not preserved. See ARCHITECTURE.md's "DOCX
-// fidelity" section for the real parse -> model -> serialize roadmap (v2).
+// builds an OpenWord ProseMirror document. This is a best-effort v1 converter,
+// not a fidelity-preserving one: a *valid* file carrying a feature this
+// importer doesn't model still opens, with the unmodeled shape dropped and its
+// text kept. README.md's "About .docx files" section is the contract for what
+// round-trips, what is dropped, and what changes on the way through.
+//
+// A file we genuinely cannot read is the opposite case and always throws a
+// DocxImportError with a message written for the user. That distinction is
+// load-bearing: the caller catches, shows the message, and keeps the document
+// already on screen. Returning an empty document instead would put a blank
+// page in front of the user under their file's name, and the next save would
+// write that blank page back over the original.
 
 import JSZip from "jszip";
-import { docFromJSON, emptyDoc, type LoadedDocument } from "../editor/document";
+import { docFromJSON, type LoadedDocument } from "../editor/document";
 import type { CommentThread, CommentEntry } from "../editor/comments";
 import type { SuggestionMetaStore } from "../editor/trackChanges";
 
@@ -12,11 +21,38 @@ import type { SuggestionMetaStore } from "../editor/trackChanges";
 // Public entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * A .docx that could not be read at all. `message` is shown verbatim to the
+ * user by the caller's error dialog, so it says what is wrong with the file
+ * in plain language rather than quoting a parser.
+ */
+export class DocxImportError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "DocxImportError";
+  }
+}
+
 export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<LoadedDocument> {
+  // A .docx is a zip archive. Anything else — a PDF, a stray .doc, a
+  // truncated download — fails here, before we have any content to lose.
+  let zip: JSZip;
   try {
-    const zip = await JSZip.loadAsync(bytes);
+    zip = await JSZip.loadAsync(bytes);
+  } catch (err) {
+    throw new DocxImportError(
+      "This file is not a readable Word document. A .docx file is a zip archive, and this one could not be opened as one — it may be damaged, or it may not be a .docx file at all.",
+      { cause: err },
+    );
+  }
+
+  try {
     const documentFile = zip.file("word/document.xml");
-    if (!documentFile) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+    if (!documentFile) {
+      throw new DocxImportError(
+        "This Word document is missing the part that holds its text (word/document.xml), so there is nothing to open. The file is incomplete or damaged.",
+      );
+    }
     const documentXml = await documentFile.async("string");
 
     const relsFile = zip.file("word/_rels/document.xml.rels");
@@ -58,10 +94,18 @@ export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<Loade
       return id;
     };
 
-    const xmlDoc = new DOMParser().parseFromString(documentXml, "application/xml");
-    if (xmlDoc.getElementsByTagName("parsererror").length > 0) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+    const xmlDoc = parseXmlPart(documentXml);
+    if (!xmlDoc) {
+      throw new DocxImportError(
+        "The part of this Word document that holds its text (word/document.xml) is not valid XML, so it cannot be read. The file is damaged.",
+      );
+    }
     const bodyEl = findChild(xmlDoc.documentElement, "body");
-    if (!bodyEl) return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+    if (!bodyEl) {
+      throw new DocxImportError(
+        "The part of this Word document that holds its text (word/document.xml) has no document body in it, so there is nothing to open. The file is damaged, or it was written by a program OpenWord does not understand.",
+      );
+    }
 
     const ctx: ImportContext = {
       rels,
@@ -72,15 +116,56 @@ export async function importDocx(bytes: Uint8Array | ArrayBuffer): Promise<Loade
       resolveSuggestionId,
     };
     const content = convertBody(bodyEl, ctx);
+    // A body holding no paragraphs or tables is a legitimate empty Word
+    // document, and an empty paragraph is its faithful representation. This is
+    // not a fallback for a failed conversion: every <w:p> that is read
+    // produces at least one block, so text cannot go missing here.
     if (content.length === 0) content.push({ type: "paragraph" });
 
-    return { doc: docFromJSON({ type: "doc", content }), comments, suggestionMeta };
+    let doc: LoadedDocument["doc"];
+    try {
+      doc = docFromJSON({ type: "doc", content });
+    } catch (err) {
+      throw new DocxImportError(
+        "OpenWord read this Word document but could not turn it into an editable document. This is a bug in OpenWord's Word converter, not damage to your file — the file has been left untouched.",
+        { cause: err },
+      );
+    }
+
+    return { doc, comments, suggestionMeta };
   } catch (err) {
-    // A malformed/unsupported .docx must never crash the caller — degrade to
-    // an empty (but valid) document rather than losing the whole import.
-    console.error("importDocx: failed to parse document, returning an empty document", err);
-    return { doc: emptyDoc(), comments: [], suggestionMeta: {} };
+    // Everything above either produced the whole document or explained why it
+    // could not. Anything unexpected that lands here (an unreadable zip entry,
+    // a decompression failure) is still a file we cannot open, so it is
+    // reported rather than swallowed: handing back an empty document would
+    // show the user a blank page under their file's name and let the next
+    // save overwrite the original with it.
+    if (err instanceof DocxImportError) throw err;
+    throw new DocxImportError(
+      `OpenWord could not read this Word document. The file may be damaged. (${err instanceof Error ? err.message : String(err)})`,
+      { cause: err },
+    );
   }
+}
+
+/**
+ * Parses one XML part of the package. DOMParser does not throw on malformed
+ * XML — it returns a document containing a <parsererror> element instead — so
+ * well-formedness has to be checked explicitly. Returns null when the input is
+ * not well-formed XML; callers decide whether that part is fatal (the main
+ * document) or merely degrades the import (numbering, styles, comments).
+ */
+function parseXmlPart(xml: string): Document | null {
+  let parsed: Document;
+  try {
+    parsed = new DOMParser().parseFromString(xml, "application/xml");
+  } catch {
+    return null; // non-conforming DOMParser implementations throw instead
+  }
+  if (parsed.getElementsByTagName("parsererror").length > 0) return null;
+  const root = parsed.documentElement;
+  if (!root || localName(root) === "parsererror") return null;
+  return parsed;
 }
 
 function parseOoxmlDate(dateStr: string | null | undefined): number {
@@ -162,20 +247,29 @@ function onOff(el: Element | null): boolean {
 // Relationships / media / numbering parts
 // ---------------------------------------------------------------------------
 
+// Every parser below reads a *secondary* part. None of them carries body text,
+// so a missing or malformed one costs presentation (a link's target, a list's
+// numbering format, a comment thread) but never the document's words — which
+// is why they degrade instead of throwing the way the main document part does.
+// They do say so on the console rather than failing silently.
+
 function parseRelationships(relsXml: string | undefined): Map<string, RelInfo> {
   const map = new Map<string, RelInfo>();
   if (!relsXml) return map;
   try {
-    const doc = new DOMParser().parseFromString(relsXml, "application/xml");
-    if (doc.getElementsByTagName("parsererror").length > 0) return map;
+    const doc = parseXmlPart(relsXml);
+    if (!doc) {
+      console.warn("importDocx: word/_rels/document.xml.rels is not valid XML; hyperlink targets and images will be missing");
+      return map;
+    }
     for (const rel of Array.from(doc.getElementsByTagName("Relationship"))) {
       const id = rel.getAttribute("Id");
       const target = rel.getAttribute("Target");
       const type = rel.getAttribute("Type") || "";
       if (id && target) map.set(id, { target, type });
     }
-  } catch {
-    // malformed rels part: degrade to no relationships rather than failing the import
+  } catch (err) {
+    console.warn("importDocx: could not read the relationships part; hyperlink targets and images will be missing", err);
   }
   return map;
 }
@@ -203,8 +297,11 @@ async function loadMedia(zip: JSZip, rels: Map<string, RelInfo>): Promise<Map<st
       const fileBytes = await file.async("uint8array");
       const mime = guessMimeFromPath(path);
       result.set(id, `data:${mime};base64,${bytesToBase64(fileBytes)}`);
-    } catch {
-      // unreadable media part: skip this one image, keep the rest of the import going
+    } catch (err) {
+      // Unreadable media part: skip this one image and keep the rest of the
+      // import going. The document's text is unaffected, so refusing to open
+      // the file over one bad image would lose far more than it saves.
+      console.warn(`importDocx: could not read the image at ${path}; it will be missing from the document`, err);
     }
   }
   return result;
@@ -247,8 +344,11 @@ function parseNumbering(numberingXml: string | undefined): Map<string, NumDef> {
   const result = new Map<string, NumDef>();
   if (!numberingXml) return result;
   try {
-    const doc = new DOMParser().parseFromString(numberingXml, "application/xml");
-    if (doc.getElementsByTagName("parsererror").length > 0) return result;
+    const doc = parseXmlPart(numberingXml);
+    if (!doc) {
+      console.warn("importDocx: word/numbering.xml is not valid XML; numbered lists will import as bullets");
+      return result;
+    }
     const root = doc.documentElement;
     const abstractLevels = new Map<string, Map<number, NumLevelDef>>();
     for (const abstractNum of findChildren(root, "abstractNum")) {
@@ -270,8 +370,9 @@ function parseNumbering(numberingXml: string | undefined): Map<string, NumDef> {
       const levels = abstractLevels.get(abstractRef);
       if (levels) result.set(numId, { levels });
     }
-  } catch {
-    // malformed numbering part: degrade to "no numbering info" (lists still import as bullets)
+  } catch (err) {
+    // Degrade to "no numbering info": lists still import, as bullets.
+    console.warn("importDocx: could not read word/numbering.xml; numbered lists will import as bullets", err);
   }
   return result;
 }
@@ -296,8 +397,11 @@ function parseStyles(stylesXml: string | undefined): Map<string, StyleDef> {
   const result = new Map<string, StyleDef>();
   if (!stylesXml) return result;
   try {
-    const doc = new DOMParser().parseFromString(stylesXml, "application/xml");
-    if (doc.getElementsByTagName("parsererror").length > 0) return result;
+    const doc = parseXmlPart(stylesXml);
+    if (!doc) {
+      console.warn("importDocx: word/styles.xml is not valid XML; list numbering inherited from a paragraph style will be missing");
+      return result;
+    }
     for (const styleEl of findChildren(doc.documentElement, "style")) {
       if (styleEl.getAttribute("w:type") !== "paragraph") continue;
       const styleId = styleEl.getAttribute("w:styleId");
@@ -309,8 +413,9 @@ function parseStyles(stylesXml: string | undefined): Map<string, StyleDef> {
       const ilvl = numPr ? Math.max(0, parseInt(findChild(numPr, "ilvl")?.getAttribute("w:val") || "0", 10) || 0) : 0;
       result.set(styleId, { basedOn, numId, ilvl });
     }
-  } catch {
-    // malformed styles part: degrade to "no style-level numbering info" (direct w:numPr still works)
+  } catch (err) {
+    // Degrade to "no style-level numbering info"; direct w:numPr still works.
+    console.warn("importDocx: could not read word/styles.xml; list numbering inherited from a paragraph style will be missing", err);
   }
   return result;
 }
@@ -359,8 +464,11 @@ function parseComments(
   const numericToThreadId = new Map<number, string>();
   if (!commentsXml) return { threads: [], numericToThreadId };
   try {
-    const doc = new DOMParser().parseFromString(commentsXml, "application/xml");
-    if (doc.getElementsByTagName("parsererror").length > 0) return { threads: [], numericToThreadId };
+    const doc = parseXmlPart(commentsXml);
+    if (!doc) {
+      console.warn("importDocx: word/comments.xml is not valid XML; the document will open without its comments");
+      return { threads: [], numericToThreadId };
+    }
     const root = doc.documentElement;
 
     const defs = new Map<number, CommentDef>();
@@ -393,8 +501,8 @@ function parseComments(
     const exByParaId = new Map<string, { parentParaId: string | null; done: boolean }>();
     if (commentsExtendedXml) {
       try {
-        const exDoc = new DOMParser().parseFromString(commentsExtendedXml, "application/xml");
-        if (exDoc.getElementsByTagName("parsererror").length === 0) {
+        const exDoc = parseXmlPart(commentsExtendedXml);
+        if (exDoc) {
           for (const ex of findChildren(exDoc.documentElement, "commentEx")) {
             const paraId = ex.getAttribute("w15:paraId");
             if (!paraId) continue;
@@ -403,9 +511,14 @@ function parseComments(
               done: ex.getAttribute("w15:done") === "1",
             });
           }
+        } else {
+          // Only the reply *threading* lives here — every comment itself is
+          // still in comments.xml, so this falls back to flat comments below
+          // rather than losing any of them.
+          console.warn("importDocx: word/commentsExtended.xml is not valid XML; comment replies will import as separate comments");
         }
-      } catch {
-        // malformed commentsExtended part: fall back to flat (unthreaded) comments below
+      } catch (err) {
+        console.warn("importDocx: could not read word/commentsExtended.xml; comment replies will import as separate comments", err);
       }
     }
 
@@ -474,7 +587,9 @@ function parseComments(
 
     return { threads, numericToThreadId };
   } catch (err) {
-    console.warn("importDocx: failed to parse comments, continuing without them", err);
+    // Comments are an annotation on the text, not the text: opening the
+    // document without them beats refusing to open it at all.
+    console.warn("importDocx: could not read word/comments.xml; the document will open without its comments", err);
     return { threads: [], numericToThreadId: new Map() };
   }
 }
@@ -760,8 +875,27 @@ function buildParagraphBlocks(
           walk(child, [...marks, { type: "deletion", attrs: { id } }]);
           break;
         }
+        case "moveFrom":
+        case "moveTo": {
+          // A tracked move is a tracked delete at the old location plus a
+          // tracked insert at the new one. We don't model the pairing, but
+          // the runs inside carry the text, so treating each half as the
+          // corresponding suggestion keeps the words instead of dropping them.
+          const kind = local === "moveTo" ? "insertion" : "deletion";
+          const id = ctx.resolveSuggestionId(
+            kind,
+            child.getAttribute("w:id") || "",
+            child.getAttribute("w:author") || "",
+            child.getAttribute("w:date") || "",
+          );
+          walk(child, [...marks, { type: kind, attrs: { id } }]);
+          break;
+        }
         case "smartTag":
-          // Non-tracked-change wrapper we don't model: drop the metadata, keep the content.
+        case "customXml":
+          // Non-tracked-change wrappers we don't model: drop the metadata,
+          // keep the content. Skipping the element outright would take the
+          // runs nested inside it with it.
           walk(child, marks);
           break;
         case "sdt": {
@@ -919,17 +1053,27 @@ function convertTable(tblEl: Element, ctx: ImportContext): Record<string, unknow
       }
 
       const blocks: unknown[] = [];
-      for (const child of Array.from(tc.children)) {
-        const local = localName(child);
-        if (local === "p") {
-          const pPr = findChild(child, "pPr");
-          const cellParagraphAttrs = { align: readAlign(pPr), indent: readIndent(pPr), lineSpacing: readLineSpacing(pPr) };
-          blocks.push(...buildParagraphBlocks(child, cellParagraphAttrs, readHeadingLevel(pPr), ctx));
-        } else if (local === "tbl") {
-          const nested = convertTable(child, ctx);
-          if (nested) blocks.push(nested);
+      const collectCellContent = (parent: Element) => {
+        for (const child of Array.from(parent.children)) {
+          const local = localName(child);
+          if (local === "p") {
+            const pPr = findChild(child, "pPr");
+            const cellParagraphAttrs = { align: readAlign(pPr), indent: readIndent(pPr), lineSpacing: readLineSpacing(pPr) };
+            blocks.push(...buildParagraphBlocks(child, cellParagraphAttrs, readHeadingLevel(pPr), ctx));
+          } else if (local === "tbl") {
+            const nested = convertTable(child, ctx);
+            if (nested) blocks.push(nested);
+          } else if (local === "sdt") {
+            // Content controls and custom-XML wrappers hold ordinary
+            // paragraphs; recurse so a cell's text isn't lost with the wrapper.
+            const content = findChild(child, "sdtContent");
+            if (content) collectCellContent(content);
+          } else if (local === "customXml") {
+            collectCellContent(child);
+          }
         }
-      }
+      };
+      collectCellContent(tc);
       if (blocks.length === 0) blocks.push({ type: "paragraph" });
 
       const cellNode: Record<string, unknown> = {
@@ -965,8 +1109,13 @@ function processBodyChild(child: Element, ctx: ImportContext, listState: ListSta
     if (content) {
       for (const inner of Array.from(content.children)) processBodyChild(inner, ctx, listState, out);
     }
+  } else if (local === "customXml") {
+    // A custom-XML wrapper carries no formatting of its own but does wrap
+    // real paragraphs and tables: recurse rather than dropping its contents.
+    for (const inner of Array.from(child.children)) processBodyChild(inner, ctx, listState, out);
   }
-  // else: sectPr, body-level bookmarks, custom XML, etc. — v2 scope, skipped gracefully
+  // else: sectPr, body-level bookmarks, proofing marks, etc. — these carry no
+  // body text, so skipping them loses nothing the user typed.
 }
 
 function convertBody(bodyEl: Element, ctx: ImportContext): unknown[] {
@@ -976,8 +1125,16 @@ function convertBody(bodyEl: Element, ctx: ImportContext): unknown[] {
     try {
       processBodyChild(child, ctx, listState, out);
     } catch (err) {
-      // One malformed element shouldn't sink the whole document.
-      console.warn("importDocx: skipping malformed body element", err);
+      // Shapes this importer doesn't model are skipped quietly inside
+      // processBodyChild — that is the best-effort contract and never lands
+      // here. Reaching this point means converting real body content failed
+      // outright, so the document we'd hand back would be missing text with
+      // nothing on screen to say so, and the next save would write that
+      // shortened document over the user's original. Refuse the file instead.
+      throw new DocxImportError(
+        `OpenWord could not read part of this Word document's contents (<${child.nodeName}>). Rather than open it with text missing, OpenWord has left the file closed.`,
+        { cause: err },
+      );
     }
   }
   listState.flush();

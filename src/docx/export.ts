@@ -1,7 +1,16 @@
 // DOCX export: walks an OpenWord ProseMirror document and builds an equivalent
 // .docx (OOXML) file using the `docx` package. This is a best-effort v1
-// converter, not a lossless round-trip — see ARCHITECTURE.md's "DOCX
-// fidelity" section for the parse -> model -> serialize roadmap (v2).
+// converter, not a lossless round-trip: saving rebuilds the whole file from
+// what the editor models, so anything it doesn't model is gone rather than
+// carried through. README.md's "About .docx files" section is the contract for
+// what round-trips, what is dropped, and what changes on the way through.
+//
+// What this must never do is finish quietly with a file that isn't the
+// document. A .docx written here replaces the user's original — the staged
+// write removes its backup once we report success — so an empty or
+// structurally broken result throws a DocxExportError instead of being
+// returned. Individual unrepresentable *pieces* (see the notes further down)
+// are still dropped, which is the documented best-effort behaviour.
 
 import {
   Document,
@@ -42,6 +51,21 @@ import type { SuggestionMetaStore } from "../editor/trackChanges";
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
+
+/**
+ * Thrown when the .docx we would have written is not a usable stand-in for the
+ * document. `message` is shown verbatim to the user by the caller's error
+ * dialog, and the caller leaves the file on disk untouched.
+ */
+export class DocxExportError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "DocxExportError";
+  }
+}
+
+/** Local file header signature every zip — and so every .docx — begins with. */
+const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
 
 export async function exportDocx(
   doc: PMNode,
@@ -392,7 +416,19 @@ export async function exportDocx(
 
   const children: (Paragraph | Table)[] = [];
   doc.forEach((node) => children.push(...convertBlockNode(node, 0)));
-  if (children.length === 0) children.push(new Paragraph({}));
+  if (children.length === 0) {
+    // A document with no blocks at all is a genuinely empty document, and a
+    // .docx has to hold at least one paragraph, so this is the faithful
+    // rendering of it. A document that *did* have blocks and still produced
+    // nothing is a converter failure, not an empty document — writing that
+    // out would replace the user's file with a blank one.
+    if (doc.content.childCount > 0) {
+      throw new DocxExportError(
+        "OpenWord could not convert this document to Word format: the conversion produced an empty file. Nothing has been saved, so your document is unchanged — save it as an OpenWord (.owdoc) file to keep your work.",
+      );
+    }
+    children.push(new Paragraph({}));
+  }
 
   const file = new Document({
     sections: [{ children }],
@@ -401,7 +437,26 @@ export async function exportDocx(
     ...(trackNumericId.size > 0 ? { features: { trackRevisions: true } } : {}),
   });
 
-  return Packer.toBlob(file);
+  let blob: Blob;
+  try {
+    blob = await Packer.toBlob(file);
+  } catch (err) {
+    throw new DocxExportError(
+      `OpenWord could not write this document as a Word file. Nothing has been saved, so your document is unchanged. (${err instanceof Error ? err.message : String(err)})`,
+      { cause: err },
+    );
+  }
+
+  // Last line of defence before these bytes replace a file on disk: a .docx is
+  // a zip, so it is never empty and always starts with the zip signature.
+  // Anything else is not a document and must not be written over one.
+  const header = new Uint8Array(await blob.slice(0, ZIP_MAGIC.length).arrayBuffer());
+  if (blob.size === 0 || ZIP_MAGIC.some((byte, i) => header[i] !== byte)) {
+    throw new DocxExportError(
+      "OpenWord could not write this document as a Word file: the result was not a valid .docx. Nothing has been saved, so your document is unchanged — save it as an OpenWord (.owdoc) file to keep your work.",
+    );
+  }
+  return blob;
 }
 
 // ---------------------------------------------------------------------------
@@ -506,9 +561,20 @@ function primaryFontName(family: string): string {
 function imageNodeToRun(node: PMNode): ImageRun | null {
   const attrs = node.attrs as { src?: string; alt?: string | null; title?: string | null; width?: unknown; height?: unknown };
   const decoded = decodeDataUrl(attrs.src);
-  if (!decoded) return null; // e.g. an absolute filesystem path we can't read from this module — skipped gracefully
+  if (!decoded) {
+    // e.g. an absolute filesystem path we can't read from this module. The
+    // rest of the document still saves; only this image is dropped, which
+    // README.md's "About .docx files" section documents.
+    console.warn("exportDocx: an image could not be decoded and will be missing from the saved .docx");
+    return null;
+  }
   const type = mimeToDocxImageType(decoded.mimeType);
-  if (!type) return null;
+  if (!type) {
+    // WebP/TIFF/SVG: OOXML's image part has no place for them here, so they
+    // open but do not save — the documented one-way trip.
+    console.warn(`exportDocx: ${decoded.mimeType} images cannot be written to .docx and will be missing from the saved file`);
+    return null;
+  }
   const sniffed = sniffImageSizePx(decoded.bytes);
   const width = parseLength(attrs.width) ?? sniffed?.width ?? 300;
   const height = parseLength(attrs.height) ?? sniffed?.height ?? 150;
