@@ -14,11 +14,15 @@
     "dev:web": "vite --mode web",
     "preview:web": "vite preview --mode web",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check:worker": "tsc -p worker/tsconfig.json",
     "test:writer": "node --test tests/writer/*.test.mjs",
     "engine:lock": "node engine/scripts/resolve-runtime.mjs",
     "engine:prepare": "node engine/scripts/prepare-sources.mjs",
     "engine:build": "bash engine/scripts/build-runtime.sh",
     "engine:verify": "node engine/scripts/verify-runtime.mjs",
+    "deploy:prepare": "node scripts/deploy/prepare-web-deploy.mjs",
+    "deploy:runtime": "node scripts/deploy/upload-writer-runtime.mjs",
+    "deploy:web": "npm run build:web && npm run deploy:prepare && npx wrangler@4 deploy",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -43,6 +47,7 @@
     "prosemirror-view": "^1.40.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260901.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tauri-apps/cli": "^2.9.1",
     "@tsconfig/svelte": "^5.0.5",
