@@ -33,6 +33,22 @@ Still incomplete:
 
 This branch should not be described as release-ready until the pinned Writer runtime builds, the desktop application compiles, and the fidelity fixtures pass.
 
+## Parallel website version
+
+The same application also runs as a pure-browser website with no server component. One build serves both: the shell feature-detects the Tauri bridge at runtime and selects the matching storage backend behind a typed platform layer.
+
+- The interface, ribbon, Writer engine, document lifecycle, and package-fidelity behavior are identical to the desktop version. The website adds an in-app menu bar and keyboard accelerators that mirror the native menus.
+- Documents persist to browser storage: File System Access handles save in place on Chromium; other browsers keep documents in the Origin Private File System with download-based export.
+- Autosave and crash recovery use the same generation-safe snapshot flow, stored atomically in IndexedDB.
+- A service worker caches the app shell and the Writer runtime with the browser Cache API, so the site works fully offline after the first visit, and injects the cross-origin-isolation headers on static hosts that cannot set them.
+
+```bash
+npm run build:web    # builds dist-web/ (requires the Writer runtime)
+npm run preview:web  # serves the built site locally
+```
+
+See [`docs/web-hosting.md`](./docs/web-hosting.md) for deployment headers, offline behavior, browser support, and privacy details.
+
 ## Architecture
 
 ```text

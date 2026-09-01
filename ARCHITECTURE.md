@@ -94,6 +94,37 @@ The generated runtime manifest records:
 
 Desktop packaging fails unless source provenance and runtime hashes match.
 
+## Platform backends
+
+Everything below the Writer bridge is pure browser code. The only native
+surface is where documents, dialogs, and recovery snapshots live, and that
+surface is isolated behind one typed platform layer in `src/platform/`:
+
+- **Desktop** (`src/platform/desktop.ts`): Tauri dialogs and filesystem
+  plugins, staged sibling-file writes with backup/rename replacement, and
+  generation-safe recovery files under the app-data directory.
+- **Web** (`src/platform/web/`): the same application persisted to browser
+  storage. File System Access handles save picked files in place (Chromium);
+  browsers without a save picker keep documents in the Origin Private File
+  System and hand the user downloaded copies. Recovery snapshots commit
+  metadata and bytes in a single IndexedDB transaction, which provides the
+  same either-old-or-new crash guarantee as the desktop pointer swap.
+  Writable streams (`createWritable`) stage into a swap file and replace the
+  target only on close, mirroring the desktop staged write.
+
+Selection is a runtime feature-detect (`isTauri()`), so one build serves the
+packaged desktop application and the website. The website adds an in-app
+menu bar, accelerator handling, `beforeunload` close protection, PWA file
+handling, and a service worker (`public/openword-sw.js`) that caches the
+shell and runtime for offline use and injects the cross-origin-isolation
+headers on hosts that cannot send them. Hosting requirements live in
+`docs/web-hosting.md`.
+
+The desktop principle "no CDN or remote runtime" carries over unchanged in
+spirit: the website serves only its own same-origin assets, the runtime host
+still refuses remote runtime URLs, and after the first load the Cache API
+makes the site fully local. Documents never leave the browser.
+
 ## Typed bridge
 
 Svelte components must not contain raw `.uno:*` strings or UNO service names.
@@ -352,6 +383,7 @@ Feature parity is defined by passing fixtures, not by menu labels.
 ```text
 engine/                         pinned source lock and runtime build system
 public/writer-runtime/          generated LOWA files and committed policies
+src/platform/                   desktop (Tauri) and web (browser-storage) backends
 src/writer/                     bridge, lifecycle, package fidelity, recovery
 src/components/                 OpenWord interface around Writer
 src/editor/ and src/docx/       temporary legacy migration-only implementation
