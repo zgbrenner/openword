@@ -4,6 +4,7 @@
     PageMarginPreset,
     PageOrientation,
     PagePaperSize,
+    ParagraphQuickStyle,
     WriterCommand,
   } from "@/writer/protocol";
   import type { WriterState } from "@/writer/state.svelte";
@@ -15,6 +16,7 @@
   export let state: WriterState;
   export let onsave: () => void | Promise<void>;
   export let onerror: (error: unknown) => void = () => {};
+  export let onfindreplace: () => void = () => {};
 
   const tabs: readonly RibbonTab[] = ["home", "insert", "layout", "review"];
   const fontFamilies = [
@@ -29,6 +31,20 @@
     "Verdana",
   ] as const;
   const fontSizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72] as const;
+  // Quick-style gallery: each entry names the Writer paragraph styles that
+  // count as "active" for the chip, since the worker reports raw style names.
+  const quickStyles: readonly {
+    style: ParagraphQuickStyle;
+    label: string;
+    writerNames: readonly string[];
+  }[] = [
+    { style: "normal", label: "Normal", writerNames: ["Standard", "Default Paragraph Style"] },
+    { style: "heading1", label: "Heading 1", writerNames: ["Heading 1"] },
+    { style: "heading2", label: "Heading 2", writerNames: ["Heading 2"] },
+    { style: "heading3", label: "Heading 3", writerNames: ["Heading 3"] },
+    { style: "title", label: "Title", writerNames: ["Title"] },
+    { style: "quote", label: "Quote", writerNames: ["Quotations"] },
+  ];
 
   let activeTab: RibbonTab = "home";
   $: unavailable = !client || !state.ready;
@@ -129,7 +145,8 @@
   {#if activeTab === "home"}
     <div id="ow-ribbon-panel-home" class="panel" role="tabpanel" aria-labelledby="ow-ribbon-tab-home">
       <section class="group" aria-label="Font">
-        <div class="group-body horizontal font-group">
+        <div class="group-body font-group">
+          <div class="font-row">
           <select aria-label="Font family" title="Font family" value={state.fontFamily} disabled={unavailable} on:change={changeFontFamily}>
             {#if !state.fontFamily}<option value="" disabled>Mixed</option>{/if}
             {#if state.fontFamily && !includesFontFamily(state.fontFamily)}
@@ -148,11 +165,36 @@
               <option value={fontSize}>{fontSize}</option>
             {/each}
           </select>
-          <button class="command" class:active={state.bold} type="button" aria-label="Bold" aria-pressed={state.bold} title="Bold" disabled={unavailable} on:click={() => void execute({ type: "format.toggleBold" })}><WriterGlyph name="bold" /></button>
-          <button class="command" class:active={state.italic} type="button" aria-label="Italic" aria-pressed={state.italic} title="Italic" disabled={unavailable} on:click={() => void execute({ type: "format.toggleItalic" })}><WriterGlyph name="italic" /></button>
-          <button class="command" class:active={state.underline} type="button" aria-label="Underline" aria-pressed={state.underline} title="Underline" disabled={unavailable} on:click={() => void execute({ type: "format.toggleUnderline" })}><WriterGlyph name="underline" /></button>
+          </div>
+          <div class="font-row">
+            <button class="command" class:active={state.bold} type="button" aria-label="Bold" aria-pressed={state.bold} title="Bold" disabled={unavailable} on:click={() => void execute({ type: "format.toggleBold" })}><WriterGlyph name="bold" size={16} /></button>
+            <button class="command" class:active={state.italic} type="button" aria-label="Italic" aria-pressed={state.italic} title="Italic" disabled={unavailable} on:click={() => void execute({ type: "format.toggleItalic" })}><WriterGlyph name="italic" size={16} /></button>
+            <button class="command" class:active={state.underline} type="button" aria-label="Underline" aria-pressed={state.underline} title="Underline" disabled={unavailable} on:click={() => void execute({ type: "format.toggleUnderline" })}><WriterGlyph name="underline" size={16} /></button>
+            <button class="command" class:active={state.strikethrough} type="button" aria-label="Strikethrough" aria-pressed={state.strikethrough} title="Strikethrough" disabled={unavailable} on:click={() => void execute({ type: "format.toggleStrikethrough" })}><WriterGlyph name="strikethrough" size={16} /></button>
+            <button class="command" class:active={state.subscript} type="button" aria-label="Subscript" aria-pressed={state.subscript} title="Subscript" disabled={unavailable} on:click={() => void execute({ type: "format.toggleSubscript" })}><WriterGlyph name="subscript" size={16} /></button>
+            <button class="command" class:active={state.superscript} type="button" aria-label="Superscript" aria-pressed={state.superscript} title="Superscript" disabled={unavailable} on:click={() => void execute({ type: "format.toggleSuperscript" })}><WriterGlyph name="superscript" size={16} /></button>
+            <button class="command" type="button" aria-label="Clear formatting" title="Clear formatting" disabled={unavailable} on:click={() => void execute({ type: "format.clearFormatting" })}><WriterGlyph name="clearFormatting" size={16} /></button>
+          </div>
         </div>
         <span>Font</span>
+      </section>
+
+      <section class="group" aria-label="Styles">
+        <div class="group-body horizontal styles-row">
+          {#each quickStyles as quickStyle}
+            <button
+              class="command style-chip"
+              class:active={quickStyle.writerNames.includes(state.paragraphStyleName)}
+              data-style={quickStyle.style}
+              type="button"
+              aria-pressed={quickStyle.writerNames.includes(state.paragraphStyleName)}
+              title={`${quickStyle.label} style`}
+              disabled={unavailable}
+              on:click={() => void execute({ type: "paragraph.applyStyle", style: quickStyle.style })}
+            >{quickStyle.label}</button>
+          {/each}
+        </div>
+        <span>Styles</span>
       </section>
 
       <section class="group" aria-label="Paragraph">
@@ -165,6 +207,13 @@
           <button class="command" class:active={state.numbering} type="button" aria-label="Numbering" aria-pressed={state.numbering} title="Numbering" disabled={unavailable} on:click={() => void execute({ type: "list.toggleNumbering" })}><WriterGlyph name="numbering" /></button>
         </div>
         <span>Paragraph</span>
+      </section>
+
+      <section class="group" aria-label="Editing">
+        <div class="group-body horizontal">
+          <button class="command large" type="button" aria-label="Find and replace" title="Find and replace" disabled={unavailable} on:click={() => onfindreplace()}><WriterGlyph name="search" size={22} /><span>Find &amp; Replace</span></button>
+        </div>
+        <span>Editing</span>
       </section>
     </div>
   {:else if activeTab === "insert"}
@@ -258,10 +307,21 @@
   .group:last-child { border-right: 0; }
   .group > span { align-self: end; color: var(--ow-text-muted); font-size: 9.5px; line-height: 15px; text-align: center; white-space: nowrap; }
   .group-body { align-content: center; gap: 2px; }
-  .font-group { gap: 3px; }
-  .font-group select { height: 26px; padding: 0 22px 0 7px; border: 1px solid var(--ow-input-border); border-radius: 4px; background: var(--ow-input-bg); color: var(--ow-text); font-size: 11px; }
-  .font-group select:first-child { width: 142px; }
+  .font-group { display: grid; align-content: center; gap: 3px; }
+  .font-row { display: flex; align-items: center; gap: 3px; }
+  .font-row .command { min-width: 26px; height: 26px; padding: 0 4px; }
+  .font-group select { height: 25px; padding: 0 22px 0 7px; border: 1px solid var(--ow-input-border); border-radius: 4px; background: var(--ow-input-bg); color: var(--ow-text); font-size: 11px; }
+  .font-row select:first-child { width: 142px; }
   .font-group select.font-size { width: 60px; }
+  .styles-row { gap: 3px; }
+  .style-chip { height: 42px; min-width: 54px; padding: 0 9px; border: 1px solid var(--ow-input-border); background: var(--ow-input-bg); font-size: 11px; white-space: nowrap; }
+  .style-chip.active { border-color: var(--ow-accent); }
+  .style-chip[data-style="title"] { font-size: 12.5px; font-weight: 700; }
+  .style-chip[data-style="heading1"] { color: var(--ow-accent); font-size: 12px; font-weight: 600; }
+  .style-chip[data-style="heading2"] { color: var(--ow-accent); font-size: 11.5px; font-weight: 600; }
+  .style-chip[data-style="heading3"] { color: var(--ow-accent); font-weight: 600; }
+  .style-chip[data-style="quote"] { font-style: italic; }
+  .style-chip[data-style="quote"]:not(.active) { color: var(--ow-text-muted); }
   .paragraph-grid { display: grid; grid-template-columns: repeat(6, 32px); align-content: center; }
   .command { min-width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0 6px; border-radius: 4px; }
   .command.large { width: 70px; height: 58px; flex-direction: column; gap: 3px; padding: 4px 5px 3px; font-size: 10px; line-height: 1.05; text-align: center; }

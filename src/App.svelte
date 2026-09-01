@@ -5,6 +5,7 @@
   import AppDialog from "@/components/AppDialog.svelte";
   import WebMenuBar from "@/components/WebMenuBar.svelte";
   import WriterCanvas from "@/components/WriterCanvas.svelte";
+  import WriterFindBar from "@/components/WriterFindBar.svelte";
   import WriterHomeBar from "@/components/WriterHomeBar.svelte";
   import WriterStatusBar from "@/components/WriterStatusBar.svelte";
   import { registerOpenWordServiceWorker } from "@/lib/serviceWorkerClient";
@@ -46,6 +47,7 @@
   let pendingOpenPath: string | null = null;
   let documentInitialized = false;
   let recoveryInFlight = false;
+  let findBarOpen = $state(false);
 
   $effect(() => {
     const title = `${writerState.dirty ? "● " : ""}${writerState.fileName} — OpenWord`;
@@ -445,15 +447,30 @@
     {client}
     state={writerState}
     onsave={() => void doSave()}
+    onfindreplace={() => (findBarOpen = !findBarOpen)}
     onerror={(error) => void showError("Writer command failed", error)}
   />
+  {#if findBarOpen}
+    <WriterFindBar
+      client={writerState.ready ? client : null}
+      onclose={() => {
+        findBarOpen = false;
+        requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
+      }}
+      onerror={(error) => void showError("Find and replace failed", error)}
+    />
+  {/if}
   <main class="ow-writer-main">
     <WriterCanvas
       onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}
       onfailure={(error) => writerState.setStartupFailure(error)}
     />
   </main>
-  <WriterStatusBar state={writerState} report={compatibilityReport} />
+  <WriterStatusBar
+    state={writerState}
+    report={compatibilityReport}
+    onzoom={(percent) => void execute({ type: "view.setZoom", percent })}
+  />
   <AppDialog />
 </div>
 

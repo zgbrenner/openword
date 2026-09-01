@@ -4,9 +4,14 @@ import {
   type WriterCommand,
   type WriterError,
   type WriterEvent,
+  type WriterFindResult,
   type WriterFormat,
+  type WriterReplaceAllResult,
+  type WriterReplaceNextResult,
+  type WriterReplaceOptions,
   type WriterRequest,
   type WriterRequestMethod,
+  type WriterSearchOptions,
 } from "./protocol";
 
 export interface WriterTransport {
@@ -82,6 +87,18 @@ export class WriterClient {
 
   async execute(command: WriterCommand): Promise<void> {
     await this.request("command.execute", { command });
+  }
+
+  find(options: WriterSearchOptions): Promise<WriterFindResult> {
+    return this.request("search.find", options);
+  }
+
+  replaceNext(options: WriterReplaceOptions): Promise<WriterReplaceNextResult> {
+    return this.request("search.replaceNext", options);
+  }
+
+  replaceAll(options: WriterReplaceOptions): Promise<WriterReplaceAllResult> {
+    return this.request("search.replaceAll", options);
   }
 
   subscribe(listener: (event: WriterEvent) => void): () => void {

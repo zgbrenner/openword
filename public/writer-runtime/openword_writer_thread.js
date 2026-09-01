@@ -9,8 +9,27 @@ let model = null;
 let controller = null;
 let modifyListener = null;
 const statusListeners = [];
-const formatting = { bold: false, italic: false, underline: false };
-const paragraph = { alignment: "left", bullets: false, numbering: false };
+const formatting = {
+  bold: false,
+  italic: false,
+  underline: false,
+  strikethrough: false,
+  subscript: false,
+  superscript: false,
+};
+const paragraph = { alignment: "left", bullets: false, numbering: false, styleName: "" };
+
+// Word-facing quick styles map onto real Writer paragraph styles; anything
+// outside this table is refused rather than passed through.
+const PARAGRAPH_QUICK_STYLES = Object.freeze({
+  normal: "Standard",
+  title: "Title",
+  subtitle: "Subtitle",
+  heading1: "Heading 1",
+  heading2: "Heading 2",
+  heading3: "Heading 3",
+  quote: "Quotations",
+});
 const documentStatistics = { pageLabel: "", pageTooltip: "", wordCountLabel: "" };
 const reviewState = { trackChangesEnabled: false };
 
@@ -206,6 +225,137 @@ function setFontSize(fontSize) {
   emitFormatting();
 }
 
+function applyParagraphQuickStyle(style) {
+  if (!controller) throw new Error("No Writer document is active");
+  const writerStyleName = PARAGRAPH_QUICK_STYLES[style];
+  if (!writerStyleName) throw new Error(`Unknown paragraph quick style: ${style}`);
+  controller.getViewCursor().setPropertyValue("ParaStyleName", writerStyleName);
+  emitParagraph();
+}
+
+function readParagraphStyle() {
+  if (!controller) return "";
+  try {
+    const styleName = controller.getViewCursor().getPropertyValue("ParaStyleName");
+    return typeof styleName === "string" ? styleName : "";
+  } catch {
+    return "";
+  }
+}
+
+// css.view.DocumentZoomType.BY_VALUE
+const ZOOM_BY_VALUE = 3;
+
+function setViewZoom(percent) {
+  if (!controller) throw new Error("No Writer document is active");
+  const value = Math.round(Number(percent));
+  if (!Number.isFinite(value) || value < 25 || value > 400) {
+    throw new Error("Zoom must be between 25% and 400%");
+  }
+  const viewSettings = controller.getViewSettings();
+  viewSettings.setPropertyValue("ZoomType", ZOOM_BY_VALUE);
+  viewSettings.setPropertyValue("ZoomValue", value);
+  postEvent("view.zoom", { percent: value });
+}
+
+function emitViewZoom() {
+  if (!controller) return;
+  try {
+    const value = Number(controller.getViewSettings().getPropertyValue("ZoomValue"));
+    if (Number.isFinite(value) && value > 0) postEvent("view.zoom", { percent: value });
+  } catch {
+    // A view without zoom settings simply reports nothing.
+  }
+}
+
+function validateSearchOptions(options) {
+  const query = options && options.query;
+  if (typeof query !== "string" || query.length === 0 || query.length > 1000) {
+    throw new Error("A search needs a query between 1 and 1000 characters");
+  }
+  return {
+    query,
+    matchCase: options.matchCase === true,
+    wholeWords: options.wholeWords === true,
+    backwards: options.backwards === true,
+  };
+}
+
+function searchDescriptor(options, replacement) {
+  if (!model) throw new Error("No Writer document is active");
+  const descriptor = typeof replacement === "string"
+    ? model.createReplaceDescriptor()
+    : model.createSearchDescriptor();
+  descriptor.setSearchString(options.query);
+  descriptor.setPropertyValue("SearchCaseSensitive", options.matchCase);
+  descriptor.setPropertyValue("SearchWords", options.wholeWords);
+  descriptor.setPropertyValue("SearchBackwards", options.backwards);
+  if (typeof replacement === "string") descriptor.setReplaceString(replacement);
+  return descriptor;
+}
+
+function findNextMatch(rawOptions) {
+  const options = validateSearchOptions(rawOptions);
+  if (!model || !controller) throw new Error("No Writer document is active");
+  const descriptor = searchDescriptor(options);
+  const viewCursor = controller.getViewCursor();
+  const start = options.backwards ? viewCursor.getStart() : viewCursor.getEnd();
+
+  let found = model.findNext(start, descriptor);
+  let wrapped = false;
+  if (!found) {
+    // Passed the document edge: continue from the opposite end once.
+    found = model.findFirst(descriptor);
+    wrapped = true;
+  }
+  if (!found) return { found: false, wrapped: false };
+  controller.select(found);
+  return { found: true, wrapped };
+}
+
+function selectionMatchesQuery(options) {
+  try {
+    const selection = controller.getSelection();
+    if (!selection || typeof selection.getByIndex !== "function" || selection.Count !== 1) {
+      return null;
+    }
+    const range = selection.getByIndex(0);
+    const text = range && typeof range.getString === "function" ? range.getString() : "";
+    if (typeof text !== "string" || !text) return null;
+    const matches = options.matchCase
+      ? text === options.query
+      : text.toLowerCase() === options.query.toLowerCase();
+    return matches ? range : null;
+  } catch {
+    return null;
+  }
+}
+
+function replaceNextMatch(rawOptions) {
+  const options = validateSearchOptions(rawOptions);
+  const replacement = typeof rawOptions.replacement === "string" ? rawOptions.replacement : "";
+  if (!model || !controller) throw new Error("No Writer document is active");
+
+  // Word semantics: Replace substitutes the occurrence the previous Find
+  // selected, then moves to the next one.
+  const selectedMatch = selectionMatchesQuery(options);
+  let replaced = false;
+  if (selectedMatch) {
+    selectedMatch.setString(replacement);
+    replaced = true;
+  }
+  const next = findNextMatch(options);
+  return { ...next, replaced };
+}
+
+function replaceAllMatches(rawOptions) {
+  const options = validateSearchOptions(rawOptions);
+  const replacement = typeof rawOptions.replacement === "string" ? rawOptions.replacement : "";
+  const descriptor = searchDescriptor(options, replacement);
+  const replaced = Number(model.replaceAll(descriptor));
+  return { replaced: Number.isFinite(replaced) ? replaced : 0 };
+}
+
 function emitDocumentStatistics() {
   postEvent("document.statistics", { ...documentStatistics });
 }
@@ -240,6 +390,7 @@ function emitFormatting() {
 }
 
 function emitParagraph() {
+  paragraph.styleName = readParagraphStyle();
   postEvent("selection.paragraph", { ...paragraph });
   emitPageStyle();
 }
@@ -270,6 +421,9 @@ function attachDocumentListeners() {
   addFormattingStatus("Bold", "bold");
   addFormattingStatus("Italic", "italic");
   addFormattingStatus("Underline", "underline");
+  addFormattingStatus("Strikeout", "strikethrough");
+  addFormattingStatus("SubScript", "subscript");
+  addFormattingStatus("SuperScript", "superscript");
   addParagraphStatus("LeftPara", "left");
   addParagraphStatus("CenterPara", "center");
   addParagraphStatus("RightPara", "right");
@@ -317,6 +471,7 @@ function activateModel(nextModel) {
   hideDocumentChrome();
   attachDocumentListeners();
   emitPageStyle();
+  emitViewZoom();
   postEvent("document.changed", { dirty: false });
 }
 
@@ -394,6 +549,14 @@ function executeCommand(command) {
     setFontSize(command.fontSize);
     return;
   }
+  if (type === "paragraph.applyStyle") {
+    applyParagraphQuickStyle(command.style);
+    return;
+  }
+  if (type === "view.setZoom") {
+    setViewZoom(command.percent);
+    return;
+  }
   const unoUrl = commandUrls[type];
   if (unoUrl) {
     dispatch(unoUrl);
@@ -436,6 +599,15 @@ function bindRequests() {
           executeCommand(request.params?.command);
           respond(request.id);
           return;
+        case "search.find":
+          respond(request.id, findNextMatch(request.params));
+          return;
+        case "search.replaceNext":
+          respond(request.id, replaceNextMatch(request.params));
+          return;
+        case "search.replaceAll":
+          respond(request.id, replaceAllMatches(request.params));
+          return;
         default:
           fail(request.id, "INVALID_REQUEST", new Error(`Unknown Writer method: ${request.method}`));
       }
@@ -446,7 +618,8 @@ function bindRequests() {
             request.method === "document.snapshot" ||
             request.method === "document.exportPdf"
           ? "SAVE_FAILED"
-          : request.method === "command.execute"
+          : request.method === "command.execute" ||
+              (typeof request.method === "string" && request.method.startsWith("search."))
             ? "COMMAND_FAILED"
             : "INVALID_REQUEST";
       fail(request.id, code, error);

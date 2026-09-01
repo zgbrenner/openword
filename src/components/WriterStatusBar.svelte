@@ -4,6 +4,23 @@
 
   export let state: WriterState;
   export let report: PackageCompatibilityReport | null = null;
+  export let onzoom: (percent: number) => void = () => {};
+
+  const ZOOM_STOPS = [25, 50, 75, 90, 100, 125, 150, 200, 300, 400];
+
+  function stopBelow(percent: number): number | null {
+    let target: number | null = null;
+    for (const stop of ZOOM_STOPS) if (stop < percent) target = stop;
+    return target;
+  }
+
+  function stopAbove(percent: number): number | null {
+    for (const stop of ZOOM_STOPS) if (stop > percent) return stop;
+    return null;
+  }
+
+  $: zoomOutTarget = stopBelow(state.zoomPercent);
+  $: zoomInTarget = stopAbove(state.zoomPercent);
 
   function compatibilityLabel(value: PackageCompatibilityReport): string {
     const warnings =
@@ -62,6 +79,32 @@
     <span title={`Current page style: ${state.pageStyleName}`}>{state.pageStyleName}</span>
     <span>{state.format.toUpperCase()}</span>
     {#if state.engineVersion}<span>{state.engineVersion}</span>{/if}
+    <div class="ow-writer-zoom" role="group" aria-label="Zoom">
+      <button
+        class="ow-zoom-button"
+        type="button"
+        aria-label="Zoom out"
+        title="Zoom out"
+        disabled={!state.ready || zoomOutTarget === null}
+        on:click={() => { if (zoomOutTarget !== null) onzoom(zoomOutTarget); }}
+      >−</button>
+      <button
+        class="ow-zoom-button ow-zoom-level"
+        type="button"
+        aria-label="Reset zoom to 100%"
+        title="Reset zoom to 100%"
+        disabled={!state.ready}
+        on:click={() => onzoom(100)}
+      >{Math.round(state.zoomPercent)}%</button>
+      <button
+        class="ow-zoom-button"
+        type="button"
+        aria-label="Zoom in"
+        title="Zoom in"
+        disabled={!state.ready || zoomInTarget === null}
+        on:click={() => { if (zoomInTarget !== null) onzoom(zoomInTarget); }}
+      >+</button>
+    </div>
   </div>
 </footer>
 
@@ -128,6 +171,49 @@
     white-space: nowrap;
   }
 
+  .ow-writer-zoom {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-left: 8px;
+    border-left: 1px solid var(--ow-divider);
+  }
+
+  .ow-zoom-button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--ow-text-muted);
+    font: inherit;
+    line-height: 1;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .ow-zoom-button:hover:not(:disabled) {
+    background: var(--ow-hover-bg);
+    color: var(--ow-text);
+  }
+
+  .ow-zoom-button:focus-visible {
+    outline: 2px solid var(--ow-accent);
+    outline-offset: 1px;
+  }
+
+  .ow-zoom-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .ow-zoom-level {
+    min-width: 40px;
+    font-variant-numeric: tabular-nums;
+  }
+
   @media (max-width: 980px) {
     .ow-writer-engine-state,
     .ow-writer-file,
@@ -136,7 +222,7 @@
   }
 
   @media (max-width: 760px) {
-    .ow-writer-status-secondary span:nth-last-child(n + 3) { display: none; }
+    .ow-writer-status-secondary > span:nth-last-child(n + 4) { display: none; }
     .ow-writer-stat.words { max-width: 150px; }
   }
 </style>

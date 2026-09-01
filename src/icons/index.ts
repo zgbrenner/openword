@@ -75,6 +75,9 @@ export const iconFileOpen = `<svg viewBox="0 0 20 20" fill="none" xmlns="http://
 
 export const iconFileSave = `<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="14" height="14" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M6 3v5h6V3" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><rect x="6.5" y="11" width="7" height="5" stroke="currentColor" stroke-width="1.5"/></svg>`;
 
+// -- Editing --
+export const iconSearch = `<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
 // -- Zoom --
 export const iconZoomIn = `<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8.5 6v5M6 8.5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
 
