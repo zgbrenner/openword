@@ -132,10 +132,12 @@ button:focus-visible {
 }
 
 @media print {
+  .ow-menubar,
   .ow-toolbar,
   .ow-ruler,
   .ow-status-bar,
   .ow-find-bar,
+  .ow-review-panel,
   .ow-page-breaks,
   .ow-page-footer {
     display: none !important;

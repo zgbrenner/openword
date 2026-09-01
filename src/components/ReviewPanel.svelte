@@ -4,11 +4,18 @@
   import type { ReviewPanelState } from "@/lib/reviewPanelState.svelte";
   import { findSuggestions, type SuggestionInfo } from "@/editor/trackChanges";
   import type { CommentThread } from "@/editor/comments";
+  import { getAuthorName, setAuthorName } from "@/lib/authorIdentity";
 
   const controller = getContext<EditorController>("editor");
   const panel = getContext<ReviewPanelState>("reviewPanel");
 
   let replyDrafts = $state<Record<string, string>>({});
+  let authorName = $state(getAuthorName());
+
+  function updateAuthorName(value: string): void {
+    setAuthorName(value);
+    authorName = getAuthorName();
+  }
 
   // Reading controller.snapshot forces recomputation on every transaction —
   // both lists' anchor positions are looked up fresh at click-time anyway
@@ -137,6 +144,18 @@
         {/each}
       </div>
     {/if}
+
+    <!-- Comments and tracked changes are attributed to this name. OpenWord is
+         local-first with no accounts, so it is simply kept on this device. -->
+    <label class="ow-review-identity">
+      Your name
+      <input
+        type="text"
+        placeholder="You"
+        value={authorName}
+        onchange={(e) => updateAuthorName((e.target as HTMLInputElement).value)}
+      />
+    </label>
   </aside>
 {/if}
 
@@ -194,6 +213,28 @@
     font-size: 12px;
     line-height: 1.5;
     margin: 4px 2px;
+  }
+
+  .ow-review-identity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--ow-chrome-border);
+    font-size: 12px;
+    color: var(--ow-text-muted);
+    flex: none;
+  }
+
+  .ow-review-identity input {
+    flex: 1;
+    min-width: 0;
+    background: var(--ow-input-bg);
+    border: 1px solid var(--ow-input-border);
+    border-radius: 5px;
+    color: var(--ow-text);
+    padding: 4px 7px;
+    font-size: 12px;
   }
 
   .ow-review-section-label {

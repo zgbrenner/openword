@@ -32,7 +32,17 @@ function reloadForIsolation(): void {
   window.location.reload();
 }
 
-export async function registerOpenWordServiceWorker(): Promise<void> {
+export interface ServiceWorkerOptions {
+  /**
+   * Whether the shell needs SharedArrayBuffer. The threaded Writer runtime
+   * does; the ProseMirror editor does not, so it takes the offline caching
+   * without paying for the isolation reload.
+   */
+  requireCrossOriginIsolation?: boolean;
+}
+
+export async function registerOpenWordServiceWorker(options: ServiceWorkerOptions = {}): Promise<void> {
+  const requireIsolation = options.requireCrossOriginIsolation ?? true;
   try {
     if (!("serviceWorker" in navigator)) return;
     if (!window.isSecureContext) return;
@@ -40,10 +50,10 @@ export async function registerOpenWordServiceWorker(): Promise<void> {
     // Relative URL and scope so subpath hosting (e.g. GitHub Pages) works.
     await navigator.serviceWorker.register("./openword-sw.js", { scope: "./" });
 
-    if (globalThis.crossOriginIsolated) {
-      // The host already sends isolation headers; the worker only adds
-      // offline caching. Clear the guard so a future header regression can
-      // still trigger one recovery reload.
+    if (!requireIsolation || globalThis.crossOriginIsolated) {
+      // Isolation is either unnecessary or already in place; the worker only
+      // adds offline caching. Clear the guard so a future header regression
+      // can still trigger one recovery reload.
       try {
         sessionStorage.removeItem(COI_RELOAD_KEY);
       } catch {

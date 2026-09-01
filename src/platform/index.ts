@@ -11,6 +11,7 @@ export type {
   Platform,
   PlatformKind,
   PlatformRecoveryStore,
+  RecoveryFormat,
   RecoveryMetadata,
   RecoverySnapshot,
   SaveDialogOptions,

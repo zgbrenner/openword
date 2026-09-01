@@ -52,13 +52,20 @@ export interface DocumentReplaceResult {
   retainedBackupPath: string | null;
 }
 
+/**
+ * What a recovery snapshot can hold: the Writer engine's package formats, or
+ * the editor shell's native `.owdoc` file. Each shell ignores a snapshot it
+ * cannot read rather than failing to open it.
+ */
+export type RecoveryFormat = WriterFormat | "owdoc";
+
 export interface RecoveryMetadata {
   version: 1;
   generation: string;
   createdAt: string;
   fileName: string;
   originalPath: string | null;
-  format: WriterFormat;
+  format: RecoveryFormat;
   documentFile: string;
 }
 

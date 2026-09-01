@@ -5,6 +5,7 @@ import {
   mergeWriterPackage,
   type PackagePreservationSnapshot,
 } from "./packagePassthrough";
+import type { WriterFormat } from "./protocol";
 import type { WriterRuntimeHost } from "./runtimeHost";
 
 export type { RecoveryMetadata, RecoverySnapshot } from "@/platform";
@@ -12,8 +13,18 @@ export type { RecoveryMetadata, RecoverySnapshot } from "@/platform";
 export interface RecoverySource {
   fileName: string;
   originalPath: string | null;
-  format: RecoveryMetadata["format"];
+  /** Writer only ever snapshots its own package formats, never `.owdoc`. */
+  format: WriterFormat;
   preservation: PackagePreservationSnapshot | null;
+}
+
+/**
+ * The Writer format of a stored snapshot, or null when the snapshot is an
+ * `.owdoc` file the editor shell left behind and this shell cannot reopen.
+ */
+export function writerRecoveryFormat(snapshot: RecoverySnapshot): WriterFormat | null {
+  const { format } = snapshot.metadata;
+  return format === "docx" || format === "odt" ? format : null;
 }
 
 function virtualUrl(path: string): string {

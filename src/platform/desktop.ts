@@ -82,7 +82,7 @@ function isValidMetadata(parsed: RecoveryMetadata | null): parsed is RecoveryMet
     parsed.version === 1 &&
     typeof parsed.generation === "string" &&
     typeof parsed.documentFile === "string" &&
-    (parsed.format === "docx" || parsed.format === "odt"),
+    (parsed.format === "docx" || parsed.format === "odt" || parsed.format === "owdoc"),
   );
 }
 

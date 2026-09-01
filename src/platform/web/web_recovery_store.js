@@ -16,7 +16,7 @@ export function isValidRecoveryMetadata(metadata) {
     typeof metadata.createdAt === "string" &&
     typeof metadata.fileName === "string" &&
     (metadata.originalPath === null || typeof metadata.originalPath === "string") &&
-    (metadata.format === "docx" || metadata.format === "odt") &&
+    (metadata.format === "docx" || metadata.format === "odt" || metadata.format === "owdoc") &&
     typeof metadata.documentFile === "string",
   );
 }

@@ -4,8 +4,8 @@
 import { APP_MENUS, isSeparator } from "./menuDefinition";
 
 // Actions that apply regardless of focus. Everything else (edit_*, insert_*,
-// format_*) is an editing command the embedded Writer engine already handles
-// natively inside its canvas — intercepting there would apply it twice.
+// format_*) is an editing command the focused editing surface already handles
+// itself — intercepting there would apply it twice.
 const APP_LEVEL_ACTIONS = new Set([
   "file_new",
   "file_open",
@@ -49,8 +49,12 @@ export function isMacPlatform(): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 }
 
-function insideWriterCanvas(event: KeyboardEvent): boolean {
-  return event.target instanceof Element && event.target.closest("#qtcanvas") !== null;
+// The two editing surfaces that own their own key handling: the Writer
+// engine's canvas and the ProseMirror editor's contenteditable.
+const EDITING_SURFACE_SELECTOR = "#qtcanvas, .ow-prosemirror";
+
+function insideEditingSurface(event: KeyboardEvent): boolean {
+  return event.target instanceof Element && event.target.closest(EDITING_SURFACE_SELECTOR) !== null;
 }
 
 /**
@@ -70,9 +74,9 @@ export function shortcutMenuAction(event: KeyboardEvent): string | null {
       ? event.code === binding.code || event.key === binding.digit
       : binding.key !== null && event.key.toLowerCase() === binding.key;
     if (!matches) continue;
-    // Editing/formatting shortcuts stay with the Writer engine when the event
-    // originates in its canvas, exactly like desktop.
-    if (!APP_LEVEL_ACTIONS.has(binding.id) && insideWriterCanvas(event)) return null;
+    // Editing/formatting shortcuts stay with the editing surface when the
+    // event originates inside one, exactly like desktop.
+    if (!APP_LEVEL_ACTIONS.has(binding.id) && insideEditingSurface(event)) return null;
     return binding.id;
   }
   return null;

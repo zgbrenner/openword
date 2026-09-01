@@ -1,11 +1,11 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { readFile } from "@tauri-apps/plugin-fs";
   import type { EditorController } from "@/lib/editorController.svelte";
+  import { getPlatform } from "@/platform";
   import * as icons from "@/icons";
 
   const controller = getContext<EditorController>("editor");
+  const platform = getPlatform();
 
   const FONT_FAMILIES = [
     "Calibri",
@@ -78,20 +78,20 @@
     openPopover = null;
   }
 
+  // Images are embedded as data URLs so a document is always one
+  // self-contained file, whichever platform it was written on.
   async function pickImage() {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
-    });
-    const chosen = Array.isArray(path) ? path[0] : path;
-    if (!chosen) return;
-    const bytes = await readFile(chosen);
-    const ext = chosen.split(".").pop()?.toLowerCase() ?? "png";
+    const pick = await platform.pickOpenDocument([
+      { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
+    ]);
+    if (!pick) return;
+    const name = pick.kind === "bytes" ? pick.name : pick.path;
+    const bytes = pick.kind === "bytes" ? pick.bytes : await platform.readDocument(pick.path);
+    const ext = name.split(".").pop()?.toLowerCase() ?? "png";
     const mime = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
     let binary = "";
     for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const dataUrl = `data:${mime};base64,${btoa(binary)}`;
-    controller.insertImage(dataUrl);
+    controller.insertImage(`data:${mime};base64,${btoa(binary)}`);
   }
 </script>
 
@@ -210,6 +210,19 @@
     {/if}
   </div>
 
+  <!-- Structure editing for the table the cursor is currently inside. There
+       is no native menu entry for these, so the toolbar is where they live. -->
+  {#if controller.snapshot.block.inTable}
+    <span class="ow-divider"></span>
+    <div class="ow-table-tools" role="group" aria-label="Table">
+      <button class="ow-btn-mini" title="Insert row below" onclick={controller.addTableRow}>+ Row</button>
+      <button class="ow-btn-mini" title="Insert column to the right" onclick={controller.addTableColumn}>+ Col</button>
+      <button class="ow-btn-mini" title="Delete row" onclick={controller.removeTableRow}>− Row</button>
+      <button class="ow-btn-mini" title="Delete column" onclick={controller.removeTableColumn}>− Col</button>
+      <button class="ow-btn-mini" title="Delete table" onclick={controller.removeTable}>Delete table</button>
+    </div>
+  {/if}
+
   <span class="ow-divider"></span>
 
   <button class="ow-icon-btn" class:active={controller.snapshot.block.align === "left"} title="Align left (Ctrl+Shift+L)" onclick={() => controller.setAlign("left")}>{@html icons.iconAlignLeft}</button>
@@ -314,5 +327,27 @@
     padding: 6px 10px;
     font-size: 13px;
     cursor: pointer;
+  }
+
+  .ow-table-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .ow-btn-mini {
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--ow-chrome-border);
+    border-radius: var(--ow-radius);
+    background: transparent;
+    color: var(--ow-text);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .ow-btn-mini:hover {
+    background: var(--ow-hover-bg);
   }
 </style>

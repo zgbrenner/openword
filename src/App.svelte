@@ -1,14 +1,21 @@
 <script lang="ts">
+  // The application root picks which shell to mount. OpenWord ships the
+  // ProseMirror editor; the LibreOffice Writer engine shell below is opt-in
+  // (see lib/shellMode.ts) because its WebAssembly runtime is a separate
+  // artifact that is not part of a normal package. Both shells speak the same
+  // menu-action ids and both persist through the platform layer.
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import AppDialog from "@/components/AppDialog.svelte";
+  import EditorShell from "@/components/EditorShell.svelte";
   import WebMenuBar from "@/components/WebMenuBar.svelte";
   import WriterCanvas from "@/components/WriterCanvas.svelte";
   import WriterFindBar from "@/components/WriterFindBar.svelte";
   import WriterHomeBar from "@/components/WriterHomeBar.svelte";
   import WriterStatusBar from "@/components/WriterStatusBar.svelte";
   import { registerOpenWordServiceWorker } from "@/lib/serviceWorkerClient";
+  import { resolveShellMode } from "@/lib/shellMode";
   import { shortcutMenuAction } from "@/lib/webShortcuts";
   import { isTauri } from "@/lib/tauriEnv";
   import { getPlatform } from "@/platform";
@@ -32,11 +39,13 @@
   import {
     clearRecoverySnapshot,
     readRecoverySnapshot,
+    writerRecoveryFormat,
     writeRecoverySnapshot,
   } from "@/writer/recovery";
   import { WriterRuntimeHost } from "@/writer/runtimeHost";
   import { WriterState } from "@/writer/state.svelte";
 
+  const shell = resolveShellMode();
   const platform = getPlatform();
   const writerState = new WriterState();
   let client = $state<WriterClient | null>(null);
@@ -50,6 +59,7 @@
   let findBarOpen = $state(false);
 
   $effect(() => {
+    if (shell !== "writer") return;
     const title = `${writerState.dirty ? "● " : ""}${writerState.fileName} — OpenWord`;
     if (isTauri()) getCurrentWindow().setTitle(title).catch(() => {});
     else document.title = title;
@@ -229,6 +239,10 @@
   ): Promise<boolean> {
     const snapshot = await readRecoverySnapshot().catch(() => null);
     if (!snapshot) return false;
+    // An .owdoc snapshot belongs to the editor shell, not to Writer: leave it
+    // in place for that shell rather than failing to load it as a package.
+    const snapshotFormat = writerRecoveryFormat(snapshot);
+    if (!snapshotFormat) return false;
 
     const restore = await platform.ask(
       `OpenWord found unsaved work from ${new Date(snapshot.metadata.createdAt).toLocaleString()}. Restore it?`,
@@ -241,7 +255,7 @@
 
     packagePreservation = await openWriterDocumentBytes(
       snapshot.bytes,
-      snapshot.metadata.format,
+      snapshotFormat,
       nextClient,
       nextHost,
     );
@@ -249,7 +263,7 @@
     writerState.setDocument(
       snapshot.metadata.originalPath,
       snapshot.metadata.fileName,
-      snapshot.metadata.format,
+      snapshotFormat,
     );
     writerState.dirty = true;
     return true;
@@ -426,6 +440,10 @@
   }
 
   onMount(() => {
+    // EditorShell owns its own document lifecycle and window wiring; only the
+    // Writer engine shell's engine-backed autosave belongs to this component.
+    if (shell !== "writer") return;
+
     const autosave = window.setInterval(() => void persistRecovery(), 20_000);
     const unmountShell = isTauri() ? mountDesktopShell() : mountWebShell();
 
@@ -440,37 +458,41 @@
 </script>
 
 <div class="ow-app">
-  {#if !isTauri()}
-    <WebMenuBar onaction={(id) => void handleMenuAction(id)} />
-  {/if}
-  <WriterHomeBar
-    {client}
-    state={writerState}
-    onsave={() => void doSave()}
-    onfindreplace={() => (findBarOpen = !findBarOpen)}
-    onerror={(error) => void showError("Writer command failed", error)}
-  />
-  {#if findBarOpen}
-    <WriterFindBar
-      client={writerState.ready ? client : null}
-      onclose={() => {
-        findBarOpen = false;
-        requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
-      }}
-      onerror={(error) => void showError("Find and replace failed", error)}
+  {#if shell === "writer"}
+    {#if !isTauri()}
+      <WebMenuBar onaction={(id) => void handleMenuAction(id)} />
+    {/if}
+    <WriterHomeBar
+      {client}
+      state={writerState}
+      onsave={() => void doSave()}
+      onfindreplace={() => (findBarOpen = !findBarOpen)}
+      onerror={(error) => void showError("Writer command failed", error)}
     />
-  {/if}
-  <main class="ow-writer-main">
-    <WriterCanvas
-      onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}
-      onfailure={(error) => writerState.setStartupFailure(error)}
+    {#if findBarOpen}
+      <WriterFindBar
+        client={writerState.ready ? client : null}
+        onclose={() => {
+          findBarOpen = false;
+          requestAnimationFrame(() => document.getElementById("qtcanvas")?.focus());
+        }}
+        onerror={(error) => void showError("Find and replace failed", error)}
+      />
+    {/if}
+    <main class="ow-writer-main">
+      <WriterCanvas
+        onready={(nextClient, nextHost) => void handleWriterReady(nextClient, nextHost)}
+        onfailure={(error) => writerState.setStartupFailure(error)}
+      />
+    </main>
+    <WriterStatusBar
+      state={writerState}
+      report={compatibilityReport}
+      onzoom={(percent) => void execute({ type: "view.setZoom", percent })}
     />
-  </main>
-  <WriterStatusBar
-    state={writerState}
-    report={compatibilityReport}
-    onzoom={(percent) => void execute({ type: "view.setZoom", percent })}
-  />
+  {:else}
+    <EditorShell />
+  {/if}
   <AppDialog />
 </div>
 

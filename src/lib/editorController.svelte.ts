@@ -1,6 +1,13 @@
 import { EditorView } from "prosemirror-view";
 import { TextSelection, type EditorState } from "prosemirror-state";
 import { undo, redo } from "prosemirror-history";
+import {
+  addColumnAfter,
+  addRowAfter,
+  deleteColumn as deleteTableColumn,
+  deleteRow as deleteTableRow,
+  deleteTable,
+} from "prosemirror-tables";
 import type { Node as PMNode, Mark } from "prosemirror-model";
 import {
   isSuggestChangesEnabled,
@@ -241,6 +248,14 @@ export class EditorController {
   insertImage = (src: string, alt?: string) => this.run((s, d) => insertImage({ src, alt })(s, d));
   insertTable = (rows: number, cols: number, withHeaderRow = true) =>
     this.run((s, d) => insertTable(rows, cols, withHeaderRow)(s, d));
+
+  // Table structure editing. Each is a no-op unless the selection is inside a
+  // table, which is what `snapshot.block.inTable` gates the toolbar group on.
+  addTableRow = () => this.run((s, d) => addRowAfter(s, d));
+  addTableColumn = () => this.run((s, d) => addColumnAfter(s, d));
+  removeTableRow = () => this.run((s, d) => deleteTableRow(s, d));
+  removeTableColumn = () => this.run((s, d) => deleteTableColumn(s, d));
+  removeTable = () => this.run((s, d) => deleteTable(s, d));
 
   undo = () => this.run((s, d) => undo(s, d));
   redo = () => this.run((s, d) => redo(s, d));

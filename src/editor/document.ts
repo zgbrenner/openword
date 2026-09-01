@@ -2,6 +2,14 @@ import { Node as PMNode } from "prosemirror-model";
 import { schema } from "./schema";
 import type { CommentThread } from "./comments";
 import type { SuggestionMetaStore } from "./trackChanges";
+import { parseOwDocFile, serializeOwDocFile } from "./document_file";
+
+export {
+  OWDOC_VERSION,
+  documentBaseName,
+  documentFormatForPath,
+  type DocumentFormat,
+} from "./document_file";
 
 export function emptyDoc(): PMNode {
   return schema.node("doc", null, [schema.node("paragraph")]);
@@ -15,42 +23,30 @@ export function docToJSON(doc: PMNode): unknown {
   return doc.toJSON();
 }
 
-/**
- * OpenWord's native .owdoc file format: the PM document plus the
- * side-stores (comment threads, track-changes author/date metadata) that
- * deliberately don't live inside the document model itself. Versioned so
- * older files — plain PM-doc JSON with no envelope, from before comments
- * existed — still open correctly.
- */
-export interface OwDocFile {
-  version: 2;
-  doc: unknown;
-  comments: CommentThread[];
-  suggestionMeta: SuggestionMetaStore;
-}
-
 export interface LoadedDocument {
   doc: PMNode;
   comments: CommentThread[];
   suggestionMeta: SuggestionMetaStore;
 }
 
+/**
+ * OpenWord's native .owdoc file format: the PM document plus the
+ * side-stores (comment threads, track-changes author/date metadata) that
+ * deliberately don't live inside the document model itself. The envelope
+ * itself — including migration of older files that were plain PM-doc JSON
+ * with no envelope, from before comments existed — lives in document_file.js
+ * so it can be unit-tested without ProseMirror; the two functions here only
+ * add the schema binding.
+ */
 export function serializeOwDoc(doc: PMNode, comments: CommentThread[], suggestionMeta: SuggestionMetaStore): string {
-  const file: OwDocFile = { version: 2, doc: docToJSON(doc), comments, suggestionMeta };
-  return JSON.stringify(file);
+  return serializeOwDocFile(docToJSON(doc), comments, suggestionMeta);
 }
 
 export function parseOwDoc(text: string): LoadedDocument {
-  const parsed = JSON.parse(text);
-  // v1 files are just a bare PM doc ({ type: "doc", content: [...] }) with
-  // no envelope — anything else is assumed to be the current envelope.
-  if (parsed && typeof parsed === "object" && parsed.type === "doc") {
-    return { doc: docFromJSON(parsed), comments: [], suggestionMeta: {} };
-  }
-  const file = parsed as OwDocFile;
+  const parts = parseOwDocFile(text);
   return {
-    doc: docFromJSON(file.doc),
-    comments: Array.isArray(file.comments) ? file.comments : [],
-    suggestionMeta: file.suggestionMeta && typeof file.suggestionMeta === "object" ? file.suggestionMeta : {},
+    doc: docFromJSON(parts.doc),
+    comments: parts.comments,
+    suggestionMeta: parts.suggestionMeta,
   };
 }
