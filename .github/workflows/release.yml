@@ -1,0 +1,306 @@
+name: Release (Windows)
+
+# Two ways in:
+#   * push a v* tag     -> publishes a real release for that tag
+#   * workflow_dispatch -> same pipeline, but you choose the tag and whether it
+#     is a draft / pre-release (useful for rehearsing a release, or for
+#     re-running one that failed after the tag was already pushed)
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, e.g. v0.1.0 (created from this ref if it does not exist)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: 'Create the release as a draft (publish it by hand afterwards)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Never run two releases for the same tag at once, and never cancel one
+# half-way through: a cancelled run can leave a release with only some of its
+# assets attached.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installers (NSIS + MSI)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      # Required to create the GitHub Release and upload assets to it.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          # Everything user-controlled goes through the environment instead of
+          # being interpolated into the script body, so a hostile dispatch
+          # input cannot inject shell code.
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_DRAFT: ${{ github.event.inputs.draft }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+            draft="$INPUT_DRAFT"
+            prerelease="$INPUT_PRERELEASE"
+          else
+            tag="$REF_NAME"
+            draft="false"
+            # v1.2.3-rc.1 and friends publish as pre-releases automatically.
+            case "$tag" in
+              *-*) prerelease="true" ;;
+              *)   prerelease="false" ;;
+            esac
+          fi
+
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'${tag}' is not a v<major>.<minor>.<patch>[-prerelease] tag."
+            exit 1
+          fi
+
+          {
+            echo "tag=${tag}"
+            echo "version=${tag#v}"
+            echo "draft=${draft}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Releasing ${tag} (draft=${draft}, prerelease=${prerelease})"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Deliberately the same key as ci.yml's desktop-windows job: same
+          # runner, same toolchain, same release profile, so this restores the
+          # cache CI already warmed on main.
+          key: desktop-release
+          # Releases are rare and must not evict the caches CI depends on, so
+          # restore only, never save.
+          save-if: 'false'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ---------------------------------------------------------------------
+      # Optional Writer WASM runtime.
+      #
+      # The LibreOffice Writer runtime (soffice.wasm / soffice.data) is far too
+      # large for git and is not in this repository, so today's releases ship
+      # without it. When the runtime is published somewhere fetchable, set a
+      # repository *variable* named WRITER_RUNTIME_URL (Settings -> Secrets and
+      # variables -> Actions -> Variables), or a *secret* of the same name if
+      # the URL must stay private, pointing at a .zip or .tar.gz whose contents
+      # are the contents of public/writer-runtime/.
+      #
+      #   set   -> download, unpack, `npm run engine:verify`, then build
+      #   unset -> both steps below are skipped; this is the normal green path
+      #
+      # Turning the engine on is therefore a repository setting, not an edit to
+      # this workflow.
+      # ---------------------------------------------------------------------
+      - name: Check for a Writer runtime bundle
+        id: engine
+        shell: bash
+        env:
+          WRITER_RUNTIME_URL: ${{ vars.WRITER_RUNTIME_URL || secrets.WRITER_RUNTIME_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WRITER_RUNTIME_URL:-}" ]; then
+            echo 'bundled=true' >> "$GITHUB_OUTPUT"
+            echo '::notice::WRITER_RUNTIME_URL is set - building an engine-bundled release.'
+          else
+            echo 'bundled=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::WRITER_RUNTIME_URL is not set - building without the Writer runtime.'
+          fi
+
+      - name: Download and verify the Writer runtime
+        if: steps.engine.outputs.bundled == 'true'
+        shell: pwsh
+        env:
+          WRITER_RUNTIME_URL: ${{ vars.WRITER_RUNTIME_URL || secrets.WRITER_RUNTIME_URL }}
+        run: |
+          $url = $env:WRITER_RUNTIME_URL
+          $isZip = $url -match '\.zip($|\?)'
+          $archive = Join-Path $env:RUNNER_TEMP ($isZip ? 'writer-runtime.zip' : 'writer-runtime.tar.gz')
+          Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRetryCount 3 -RetryIntervalSec 5
+          New-Item -ItemType Directory -Force -Path 'public/writer-runtime' | Out-Null
+          if ($isZip) {
+            Expand-Archive -Path $archive -DestinationPath 'public/writer-runtime' -Force
+          } else {
+            tar -xzf $archive -C 'public/writer-runtime'
+          }
+          Remove-Item -LiteralPath $archive -Force
+          # engine/scripts/verify-runtime.mjs re-hashes every artifact against
+          # engine/runtime.lock.json and the runtime's own manifest, so a
+          # truncated or substituted download fails the release right here
+          # instead of shipping a broken engine.
+          npm run engine:verify
+
+      - name: Build and publish the release
+        id: tauri
+        uses: tauri-apps/tauri-action@v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: OpenWord ${{ steps.meta.outputs.version }}
+          releaseBody: |
+            ## Install
+
+            | File | What it is |
+            | --- | --- |
+            | `OpenWord_${{ steps.meta.outputs.version }}_x64-setup.exe` | NSIS installer, per-user, no admin rights needed |
+            | `OpenWord_${{ steps.meta.outputs.version }}_x64_en-US.msi` | MSI, for Group Policy / Intune style deployment |
+
+            Every installer ships with a matching `.sha256` file. Verify before running:
+
+            ```powershell
+            Get-FileHash .\OpenWord_${{ steps.meta.outputs.version }}_x64-setup.exe -Algorithm SHA256
+            ```
+
+            > These builds are **not** Authenticode signed yet, so Windows
+            > SmartScreen warns the first time you run the installer. Checking
+            > the SHA-256 above is how you confirm the download.
+          releaseDraft: ${{ steps.meta.outputs.draft }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          # Prepend the notes above to GitHub's auto-generated changelog.
+          generateReleaseNotes: true
+          # No updater plugin is configured, so there is no latest.json and no
+          # .sig files to publish. Flip both back on if tauri-plugin-updater is
+          # ever added (see Option C in the signing block below).
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          # Also keep the bundles as workflow artifacts, so deleting a draft
+          # release does not take the only copy of the build with it.
+          uploadWorkflowArtifacts: true
+          retryAttempts: 1
+          # Explicit bundle list: this pipeline is defined as "the Windows NSIS
+          # + MSI release" and must not silently change shape if bundle.targets
+          # in tauri.conf.json changes.
+          args: --bundles nsis,msi
+
+      # =====================================================================
+      # WINDOWS CODE SIGNING - NOT ENABLED
+      #
+      # Everything in this block is correct but commented out, because it needs
+      # secrets this repository does not have. Unsigned installers work fine;
+      # SmartScreen just warns on first run. Enable exactly one of A or B, and
+      # enable it fully - a half-configured signing setup fails every release.
+      #
+      # --- Option A: Authenticode with a PFX held in a secret ---------------
+      # Add these repository secrets:
+      #   WINDOWS_CERTIFICATE           base64 of the .pfx file
+      #   WINDOWS_CERTIFICATE_PASSWORD  the .pfx password
+      # Then insert this step *before* the "Build and publish" step above:
+      #
+      # - name: Import the code signing certificate
+      #   id: import-cert
+      #   shell: pwsh
+      #   env:
+      #     WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      #     WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      #   run: |
+      #     $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+      #     [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+      #     $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+      #     $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+      #     Remove-Item -LiteralPath $pfx -Force
+      #     "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      #
+      # ...then hand the thumbprint to the bundler through the tauri-action
+      # `args` input, which overrides tauri.conf.json without editing it.
+      # digestAlgorithm and timestampUrl are already set in
+      # src-tauri/tauri.conf.json, so only the thumbprint has to be injected:
+      #
+      #   args: >-
+      #     --bundles nsis,msi
+      #     --config {"bundle":{"windows":{"certificateThumbprint":"THUMBPRINT_OUTPUT"}}}
+      #
+      # (replace THUMBPRINT_OUTPUT with the steps.import-cert.outputs.thumbprint
+      # expression; it is spelled out here so this comment stays inert.)
+      #
+      # --- Option B: cloud HSM / EV certificate ----------------------------
+      # Azure Trusted Signing, DigiCert KeyLocker, SSL.com eSigner and friends
+      # never expose a thumbprint to the runner, so use a sign command instead.
+      # Add bundle.windows.signCommand to src-tauri/tauri.conf.json, e.g.
+      #   "signCommand": "signtool sign /v /fd sha256 /tr http://timestamp.acs.microsoft.com /td sha256 /dlib DLIB /dmdf METADATA.json %1"
+      # Tauri substitutes %1 with each file to sign. Any credentials the tool
+      # needs go in this job's env: block.
+      #
+      # --- Option C: Tauri updater signing (a different thing entirely) -----
+      # Only needed if tauri-plugin-updater is added later. Generate a keypair
+      # with `npm run tauri -- signer generate`, store the private key as the
+      # TAURI_SIGNING_PRIVATE_KEY secret and its passphrase as
+      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD, add both to the build step's env:,
+      # put the public key in tauri.conf.json under plugins.updater.pubkey, and
+      # set uploadUpdaterJson / uploadUpdaterSignatures back to true.
+      # =====================================================================
+
+      - name: Compute SHA-256 checksums
+        id: checksums
+        shell: pwsh
+        env:
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: |
+          $paths = $env:ARTIFACT_PATHS | ConvertFrom-Json
+          $installers = @($paths | Where-Object { $_ -match '\.(exe|msi)$' })
+          if ($installers.Count -eq 0) {
+            throw "tauri-action reported no .exe/.msi installers: $env:ARTIFACT_PATHS"
+          }
+          $outDir = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'checksums')
+          foreach ($path in $installers) {
+            $name = Split-Path -Path $path -Leaf
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLower()
+            # sha256sum-compatible format: hash, two spaces, filename.
+            Set-Content -Path (Join-Path $outDir "$name.sha256") -Value "$hash  $name" -Encoding ascii
+            Write-Host "$hash  $name"
+          }
+          "dir=$($outDir.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Attach the checksums to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          CHECKSUM_DIR: ${{ steps.checksums.outputs.dir }}
+        run: |
+          $files = @((Get-ChildItem -Path $env:CHECKSUM_DIR -Filter '*.sha256' -File).FullName)
+          # gh resolves drafts by tag as well, so this also works for drafts.
+          gh release upload $env:TAG $files --clobber
+
+      - name: Keep the checksums as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openword-${{ steps.meta.outputs.version }}-checksums
+          path: ${{ steps.checksums.outputs.dir }}
+          if-no-files-found: error

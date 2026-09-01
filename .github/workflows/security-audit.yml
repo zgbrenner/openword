@@ -1,0 +1,106 @@
+name: Dependency audit
+
+# Deliberately NOT a pull request gate. Advisories appear because someone
+# published one, not because of anything the PR author did, so blocking merges
+# on them just teaches people to ignore a red check. This runs on a schedule,
+# on demand, and whenever a lockfile actually changes on main.
+on:
+  schedule:
+    # Mondays, 05:23 UTC - a couple of hours before the Dependabot window, so
+    # the audit result is already visible when the bump PRs land.
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'package-lock.json'
+      - 'src-tauri/Cargo.lock'
+      - '.github/workflows/security-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  npm:
+    name: npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Blocking: these are the packages that actually ship inside the app
+      # bundle, so a high/critical advisory here reaches users.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      # Advisory: build-time-only tooling (vite, svelte-check, tsc and their
+      # transitive deps). Worth knowing about and worth fixing, but a advisory
+      # in a bundler does not ship to users, and a red scheduled job here would
+      # be permanently red for reasons Dependabot is already working on.
+      # Findings still land in the job summary below.
+      - name: Audit build tooling (advisory)
+        id: dev-audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - name: Summarise the build tooling audit
+        if: always()
+        env:
+          OUTCOME: ${{ steps.dev-audit.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Build tooling audit'
+            echo
+            if [ "$OUTCOME" = 'success' ]; then
+              echo 'No high or critical advisories in the full dependency tree.'
+            else
+              echo 'High or critical advisories found in build-time dependencies:'
+              echo
+              echo '```'
+              npm audit --audit-level=high || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cargo:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: audit
+          # Also caches ~/.cargo/bin, so cargo-audit is only compiled once.
+          cache-bin: true
+
+      - name: Install cargo-audit
+        # --locked so cargo-audit builds from its own published lockfile.
+        # Re-running when it is already installed is a no-op, not an error.
+        run: cargo install --locked cargo-audit
+
+      # cargo-audit exits non-zero for actual vulnerabilities. Informational
+      # advisories (unmaintained / unsound) are printed as warnings and do not
+      # fail the job - which matters here, because the GTK3 bindings the whole
+      # Tauri v2 Linux stack depends on carry permanent "unmaintained"
+      # advisories that no version bump can clear.
+      - name: Audit Cargo dependencies
+        working-directory: src-tauri
+        run: cargo audit

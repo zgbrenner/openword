@@ -1,0 +1,93 @@
+version: 2
+
+# Weekly, grouped, and low volume on purpose: this project has three separate
+# dependency surfaces (the Svelte app, the Tauri crate, and the workflows in
+# this directory) and each of them wants a different review posture.
+#
+# Commit prefixes match the conventional-commit types this repository already
+# uses, so Dependabot's PRs pass the pr-title check without any extra config.
+updates:
+  # ------------------------------------------------------------------ npm --
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    groups:
+      # ProseMirror ships as ~15 tightly coupled packages whose versions have
+      # to move together; one PR per package would be unreviewable.
+      prosemirror:
+        patterns:
+          - 'prosemirror-*'
+          - 'orderedmap'
+          - '@handlewithcare/prosemirror-*'
+      # The JS side of Tauri has to stay in step with the Rust side, so these
+      # get reviewed alongside the cargo group below.
+      tauri-js:
+        patterns:
+          - '@tauri-apps/*'
+      # Build toolchain. Breakage here shows up immediately in `npm run check`
+      # and `npm run build`, so grouping is safe.
+      build-toolchain:
+        patterns:
+          - 'svelte'
+          - 'svelte-check'
+          - '@sveltejs/*'
+          - '@tsconfig/*'
+          - 'typescript'
+          - 'vite'
+      cloudflare:
+        patterns:
+          - '@cloudflare/*'
+    # Everything else (docx, jszip) stays ungrouped: those are format-critical
+    # and each one deserves its own PR and its own read of the changelog.
+
+  # ---------------------------------------------------------------- cargo --
+  - package-ecosystem: cargo
+    directory: '/src-tauri'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      # tauri, tauri-build and the plugins are released together and are only
+      # ever compatible with each other in matched sets.
+      tauri:
+        patterns:
+          - 'tauri'
+          - 'tauri-build'
+          - 'tauri-plugin-*'
+      serde:
+        patterns:
+          - 'serde'
+          - 'serde_json'
+
+  # ------------------------------------------------------- github-actions --
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      # Action bumps are near-always mechanical; one PR a week is plenty.
+      actions:
+        patterns:
+          - '*'

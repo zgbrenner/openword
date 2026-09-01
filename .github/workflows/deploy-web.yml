@@ -1,0 +1,127 @@
+name: Deploy website (Cloudflare Workers)
+
+# MANUAL ONLY, on purpose.
+#
+# `npm run build:web` runs `engine:verify` first, so the web build cannot even
+# start without the Writer WASM runtime (soffice.wasm / soffice.data) in
+# public/writer-runtime/. Those artifacts are far too large for git and are not
+# in this repository, so this workflow cannot succeed unattended today. Wiring
+# it to `release: [published]` would just mean every release has a red job
+# hanging off it.
+#
+# Once the runtime is published and WRITER_RUNTIME_URL is set (see below), add:
+#
+#   release:
+#     types: [published]
+#
+# to the triggers, and the same secret gate below keeps it inert for anyone who
+# forks the repository.
+#
+# Note that this deploys the Worker and its static assets only. The runtime
+# itself lives in R2 and is uploaded separately by `npm run deploy:runtime`,
+# which needs credentials with R2 write access; see docs/web-hosting.md.
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Build and prepare dist-web/ but do not call wrangler deploy'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  # `secrets` cannot be referenced from a job-level `if:`, so the gate lives in
+  # its own job and is exposed as an output. When the Cloudflare credentials
+  # are absent this job succeeds with a notice and the deploy job is skipped -
+  # it never fails, and it never leaks whether a secret exists to a log.
+  preflight:
+    name: Check Cloudflare credentials
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Look for CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+        id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set - skipping the deploy.'
+          fi
+
+  deploy:
+    name: Build and deploy
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same optional-engine contract as release.yml: set the WRITER_RUNTIME_URL
+      # repository variable (or secret) to a .zip / .tar.gz of
+      # public/writer-runtime/. Unlike the desktop build, the *web* build hard
+      # requires it - `npm run build:web` starts with `engine:verify` - so this
+      # step fails loudly with an explanation rather than being skipped.
+      - name: Fetch the Writer runtime
+        env:
+          WRITER_RUNTIME_URL: ${{ vars.WRITER_RUNTIME_URL || secrets.WRITER_RUNTIME_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WRITER_RUNTIME_URL:-}" ]; then
+            echo '::error::WRITER_RUNTIME_URL is not set. The web build runs engine:verify first and cannot run without the Writer WASM runtime. See docs/web-hosting.md.'
+            exit 1
+          fi
+          case "$WRITER_RUNTIME_URL" in
+            *.zip) archive="$RUNNER_TEMP/writer-runtime.zip" ;;
+            *)     archive="$RUNNER_TEMP/writer-runtime.tar.gz" ;;
+          esac
+          curl -sSfL --retry 3 -o "$archive" "$WRITER_RUNTIME_URL"
+          mkdir -p public/writer-runtime
+          case "$archive" in
+            *.zip) unzip -oq "$archive" -d public/writer-runtime ;;
+            *)     tar -xzf "$archive" -C public/writer-runtime ;;
+          esac
+          rm -f "$archive"
+
+      # build:web = engine:verify + Writer tests + svelte-check + vite build.
+      - name: Build the web bundle
+        run: npm run build:web
+
+      # Writes dist-web/.assetsignore so the oversized runtime files are left
+      # out of the Workers asset upload; they are served from R2 instead.
+      - name: Prepare dist-web for Workers
+        run: npm run deploy:prepare
+
+      - name: Deploy to Cloudflare Workers
+        if: ${{ !inputs.dry-run }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Same wrangler major the repo's own `deploy:web` script pins.
+        run: npx wrangler@4 deploy
+
+      - name: Report a dry run
+        if: ${{ inputs.dry-run }}
+        run: echo '::notice::Dry run - dist-web/ was built and prepared, wrangler deploy was not called.'

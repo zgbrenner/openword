@@ -1,0 +1,112 @@
+name: Bug report
+description: Something in OpenWord does not do what it says it does.
+title: 'fix: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. The more precisely you can
+        describe what you did and what happened, the faster it gets fixed.
+
+        **Security problems do not belong here.** Report those privately via
+        [a security advisory](https://github.com/zgbrenner/openword/security/advisories/new).
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did this happen?
+      options:
+        - Desktop app (Tauri)
+        - Website (browser)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: OpenWord version
+      description: 'Help -> About OpenWord, or the release you installed. For a build from source, the commit SHA.'
+      placeholder: '0.1.0'
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: 'Windows 11 26100, macOS 15.3, Ubuntu 24.04'
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: Only if this is a website bug.
+      placeholder: 'Firefox 142, Chrome 141'
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, starting from a fresh launch.
+      placeholder: |
+        1. Open a new document
+        2. Type "hello", select it, press Ctrl+B
+        3. Save as .docx and reopen it
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Include the exact error text if there was one, and a screenshot if it is visual.
+    validations:
+      required: true
+
+  - type: textarea
+    id: document
+    attributes:
+      label: Document details
+      description: >-
+        If a specific file triggers this, say what format it is (.docx, .odt,
+        .owdoc), roughly how large it is, and what it contains (tables, tracked
+        changes, headers/footers, images). Please do not attach anything
+        confidential.
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: >-
+        Desktop: run the app from a terminal and paste stderr. Website: paste
+        the browser devtools console. This is automatically formatted as code.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I can reproduce this on the latest release.
+          required: false

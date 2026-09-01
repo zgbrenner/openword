@@ -1,0 +1,85 @@
+name: Feature request
+description: Propose something OpenWord should be able to do.
+title: 'feat: '
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        OpenWord has a deliberately narrow shape: a local-first word processor
+        on a single LibreOffice Writer engine, with a desktop crate that is
+        structurally incapable of making network requests. Requests that fit
+        that shape move fast. Requests that need the network, an account, or a
+        second document engine belong in `plugins/`, not the core app - say so
+        up front and it saves everyone a round trip.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >-
+        Describe the task, not the feature. "I need my headings to be numbered
+        so the export matches our template" beats "add heading numbering".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should OpenWord do instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where would this live?
+      options:
+        - Desktop app (Tauri)
+        - Website (browser)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Does this need network access, an account, or a cloud service?
+      description: >-
+        If yes, it cannot go in the core app - it would have to be a plugin.
+        That is not a rejection, it is just a different place.
+      options:
+        - 'No - it works fully offline'
+        - 'Yes - it needs the network or an account'
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: How do Word or LibreOffice Writer handle this?
+      description: >-
+        Compatibility with existing documents is the whole point of the Writer
+        engine, so how the incumbents behave usually decides the design.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing today instead?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I read ARCHITECTURE.md and this fits the project's scope (or I explained above why the scope should change).
+          required: false

@@ -1,0 +1,51 @@
+name: PR title
+
+# This repository's history is conventional-commit shaped (feat:, fix:, test:,
+# build:, docs:, refactor:, ci:, types:). Pull request titles become the commit
+# subject on a squash merge, so they are checked with the same vocabulary.
+#
+# `pull_request` (not `pull_request_target`) on purpose: this check never needs
+# write access or repository secrets, so there is no reason to run it with the
+# base branch's privileges.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-title:
+    name: Conventional commit title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The types actually in use in this repository, plus the remaining
+          # standard ones so nobody has to edit this file to write a `perf:` or
+          # `chore:` commit. `types:` is non-standard but is what this project
+          # uses for "declare a module's types before implementing it".
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+            types
+          # Scopes are optional and free-form here (engine, worker, ribbon, ...);
+          # an allow-list would go stale faster than it would help.
+          requireScope: false

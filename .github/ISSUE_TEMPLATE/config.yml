@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/zgbrenner/openword/security/policy
+    about: >-
+      Please do not open a public issue for a security problem. Follow the
+      private reporting process described in the security policy.

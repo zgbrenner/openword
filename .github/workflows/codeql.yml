@@ -1,0 +1,61 @@
+name: CodeQL
+
+# CodeQL is free for public repositories. Two analyses run here:
+#   * javascript-typescript - the Svelte app, the Cloudflare Worker, the engine
+#     and deploy scripts, and the Node test suites
+#   * actions - the workflows in this directory, checked for the usual Actions
+#     footguns (script injection through untrusted input, over-broad
+#     permissions, unpinned third-party actions)
+#
+# The Rust side is deliberately not analysed here: CodeQL's Rust support needs
+# a full `cargo build`, which would duplicate the CI job for very little signal
+# on a ~200 line crate that makes no network calls by design.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays, 04:41 UTC. Off-the-hour so it does not land in the peak minute
+    # when every scheduled workflow on GitHub fires at once.
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Required to upload the SARIF results to the Security tab.
+      security-events: write
+      # Required by the CodeQL action to read workflow run metadata.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript', 'actions']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality adds maintainability queries on top of the
+          # default security set. Both languages here are interpreted, so no
+          # build step (and therefore no Writer runtime) is needed.
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
