@@ -1,0 +1,24 @@
+# OpenWord website deployment: Cloudflare Workers static assets + R2.
+#
+# The shell (dist-web/) ships as Workers static assets. The Writer runtime does
+# not: Workers static assets cap a single file at 25 MiB and soffice.wasm /
+# soffice.data are far larger, so they live in R2 and are proxied by the Worker
+# on the same origin. See docs/web-hosting.md.
+
+name = "openword"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[assets]
+directory = "dist-web"
+binding = "ASSETS"
+# Default not_found_handling ("none") is what we want: a request that matches no
+# asset falls through to the Worker, which is how /writer-runtime/* reaches R2.
+
+[[r2_buckets]]
+binding = "WRITER_RUNTIME"
+bucket_name = "openword-writer-runtime"

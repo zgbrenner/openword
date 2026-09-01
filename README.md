@@ -50,7 +50,14 @@ npm run build:web    # builds dist-web/ (requires the Writer runtime)
 npm run preview:web  # serves the built site locally
 ```
 
-See [`docs/web-hosting.md`](./docs/web-hosting.md) for deployment headers, offline behavior, browser support, and privacy details.
+The reference deployment is Cloudflare Workers static assets for the shell plus R2 for the Writer runtime, served on one origin by `worker/index.ts`. Static hosts cap individual files well below the size of `soffice.wasm` and `soffice.data` (25 MiB on Cloudflare Pages and Workers assets, 100 MB on GitHub Pages), and R2 bills no egress, which matters when every cold visit downloads the runtime.
+
+```bash
+npm run deploy:runtime  # verify and upload public/writer-runtime/ to R2
+npm run deploy:web      # build, prepare dist-web/, and deploy the Worker
+```
+
+See [`docs/web-hosting.md`](./docs/web-hosting.md) for the Cloudflare setup, deployment headers for other hosts, offline behavior, browser support, and privacy details.
 
 ## Architecture
 

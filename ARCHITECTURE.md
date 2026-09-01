@@ -120,6 +120,13 @@ shell and runtime for offline use and injects the cross-origin-isolation
 headers on hosts that cannot send them. Hosting requirements live in
 `docs/web-hosting.md`.
 
+Deployment splits the site across two Cloudflare primitives without splitting
+its origin. The shell ships as Workers static assets; the Writer runtime is too
+large for them (25 MiB per file) and lives in R2, which `worker/index.ts`
+proxies under `/writer-runtime/`. The Worker exists because the runtime host
+rejects remote runtime URLs and threaded LOWA needs cross-origin isolation, so
+the bytes have to arrive same-origin regardless of where they are stored.
+
 The desktop principle "no CDN or remote runtime" carries over unchanged in
 spirit: the website serves only its own same-origin assets, the runtime host
 still refuses remote runtime URLs, and after the first load the Cache API
