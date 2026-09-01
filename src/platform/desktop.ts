@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, basename } from "@tauri-apps/api/path";
 import { ask, message, open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -10,6 +11,8 @@ import {
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
+import { resolveShellMode } from "@/lib/shellMode";
+import { createShellScopedRecoveryStore } from "./recovery_slots";
 import type {
   DocumentPick,
   DocumentReplaceResult,
@@ -22,50 +25,28 @@ import type {
   SaveDialogOptions,
 } from "./types";
 
-function operationToken(): string {
-  const raw = typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return raw.replace(/[^a-zA-Z0-9-]/g, "");
-}
-
 /**
- * Writes the complete new document beside the target before touching the
- * original. A failed replacement restores the original when possible and
- * deliberately retains the staged file so the new bytes remain recoverable.
+ * Replacing a document is one Rust command rather than a sequence of
+ * filesystem-plugin calls, because a staged write needs sibling paths
+ * (`<target>.openword-tmp-*` and `<target>.openword-backup-*`) that no
+ * capability grants: the dialog plugin only ever allows the exact file the
+ * user picked, and the filesystem plugin only allows what `fs:scope` lists.
+ * Staging from the frontend therefore made every document outside `$HOME`,
+ * `$DOCUMENT` and `$APPDATA` — a second drive, a mapped network share —
+ * impossible to save. The shell performs the same staged write, backup and
+ * pair of renames, all inside the target's own directory so the final rename
+ * never has to cross a volume.
  */
 async function replaceWithStagedNativeFile(
   targetPath: string,
   bytes: Uint8Array,
 ): Promise<DocumentReplaceResult> {
-  const token = operationToken();
-  const stagedPath = `${targetPath}.openword-tmp-${token}`;
-  const backupPath = `${targetPath}.openword-backup-${token}`;
-  const hadOriginal = await exists(targetPath);
-
-  await writeFile(stagedPath, bytes);
-  if (hadOriginal) await rename(targetPath, backupPath);
-
-  try {
-    await rename(stagedPath, targetPath);
-  } catch (error) {
-    if (hadOriginal && !(await exists(targetPath)) && (await exists(backupPath))) {
-      await rename(backupPath, targetPath).catch(() => {});
-    }
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not replace ${targetPath}. New document bytes remain at ${stagedPath}. ${detail}`);
-  }
-
-  if (hadOriginal && (await exists(backupPath))) {
-    try {
-      await remove(backupPath);
-    } catch {
-      // The target is saved correctly. Retain the old file and report its
-      // location instead of turning successful persistence into an error.
-      return { retainedBackupPath: backupPath };
-    }
-  }
-  return { retainedBackupPath: null };
+  // The bytes travel as the raw IPC body (`plugin:fs|write_file` uses the same
+  // shape) so a large document is not re-encoded as a JSON array of numbers.
+  const result = await invoke<DocumentReplaceResult>("replace_document_atomically", bytes, {
+    headers: { path: encodeURIComponent(targetPath) },
+  });
+  return { retainedBackupPath: result.retainedBackupPath ?? null };
 }
 
 // --- Generation-safe recovery storage under the Tauri app-data directory ---
@@ -86,8 +67,7 @@ function isValidMetadata(parsed: RecoveryMetadata | null): parsed is RecoveryMet
   );
 }
 
-async function readCurrentMetadata(directory: string): Promise<RecoveryMetadata | null> {
-  const pointerPath = `${directory}/current.json`;
+async function readCurrentMetadata(pointerPath: string): Promise<RecoveryMetadata | null> {
   if (!(await exists(pointerPath))) return null;
   try {
     const parsed = JSON.parse(await readTextFile(pointerPath)) as RecoveryMetadata;
@@ -97,8 +77,7 @@ async function readCurrentMetadata(directory: string): Promise<RecoveryMetadata 
   }
 }
 
-async function replacePointer(directory: string, content: string): Promise<void> {
-  const pointerPath = `${directory}/current.json`;
+async function replacePointer(pointerPath: string, content: string): Promise<void> {
   const stagedPath = `${pointerPath}.tmp`;
   const backupPath = `${pointerPath}.backup`;
 
@@ -119,44 +98,62 @@ async function replacePointer(directory: string, content: string): Promise<void>
   if (hadPointer && (await exists(backupPath))) await remove(backupPath);
 }
 
-const desktopRecoveryStore: PlatformRecoveryStore = {
-  async write(metadata: RecoveryMetadata, bytes: Uint8Array): Promise<void> {
-    const directory = await recoveryDirectory();
-    const previous = await readCurrentMetadata(directory);
-    const documentPath = `${directory}/${metadata.documentFile}`;
-    const stagedDocumentPath = `${documentPath}.tmp`;
-
-    if (await exists(stagedDocumentPath)) await remove(stagedDocumentPath);
-    await writeFile(stagedDocumentPath, bytes);
-    await rename(stagedDocumentPath, documentPath);
-    await replacePointer(directory, `${JSON.stringify(metadata, null, 2)}\n`);
-
-    if (previous && previous.documentFile !== metadata.documentFile) {
-      const previousPath = `${directory}/${previous.documentFile}`;
-      if (await exists(previousPath)) await remove(previousPath).catch(() => {});
-    }
-  },
-
-  async read(): Promise<RecoverySnapshot | null> {
-    const directory = await recoveryDirectory();
-    const metadata = await readCurrentMetadata(directory);
-    if (!metadata) return null;
-    const documentPath = `${directory}/${metadata.documentFile}`;
-    if (!(await exists(documentPath))) return null;
-    return { metadata, bytes: await readFile(documentPath) };
-  },
-
-  async clear(): Promise<void> {
-    const directory = await recoveryDirectory();
-    const metadata = await readCurrentMetadata(directory);
-    const pointerPath = `${directory}/current.json`;
-    if (metadata) {
+/**
+ * One generation-safe slot: a pointer file naming the current snapshot, and
+ * the snapshot documents themselves (each named after its own generation, so
+ * two slots sharing the directory never collide).
+ */
+function createRecoverySlot(pointerFile: string): PlatformRecoveryStore {
+  return {
+    async write(metadata: RecoveryMetadata, bytes: Uint8Array): Promise<void> {
+      const directory = await recoveryDirectory();
+      const pointerPath = `${directory}/${pointerFile}`;
+      const previous = await readCurrentMetadata(pointerPath);
       const documentPath = `${directory}/${metadata.documentFile}`;
-      if (await exists(documentPath)) await remove(documentPath).catch(() => {});
-    }
-    if (await exists(pointerPath)) await remove(pointerPath);
+      const stagedDocumentPath = `${documentPath}.tmp`;
+
+      if (await exists(stagedDocumentPath)) await remove(stagedDocumentPath);
+      await writeFile(stagedDocumentPath, bytes);
+      await rename(stagedDocumentPath, documentPath);
+      await replacePointer(pointerPath, `${JSON.stringify(metadata, null, 2)}\n`);
+
+      if (previous && previous.documentFile !== metadata.documentFile) {
+        const previousPath = `${directory}/${previous.documentFile}`;
+        if (await exists(previousPath)) await remove(previousPath).catch(() => {});
+      }
+    },
+
+    async read(): Promise<RecoverySnapshot | null> {
+      const directory = await recoveryDirectory();
+      const metadata = await readCurrentMetadata(`${directory}/${pointerFile}`);
+      if (!metadata) return null;
+      const documentPath = `${directory}/${metadata.documentFile}`;
+      if (!(await exists(documentPath))) return null;
+      return { metadata, bytes: await readFile(documentPath) };
+    },
+
+    async clear(): Promise<void> {
+      const directory = await recoveryDirectory();
+      const pointerPath = `${directory}/${pointerFile}`;
+      const metadata = await readCurrentMetadata(pointerPath);
+      if (metadata) {
+        const documentPath = `${directory}/${metadata.documentFile}`;
+        if (await exists(documentPath)) await remove(documentPath).catch(() => {});
+      }
+      if (await exists(pointerPath)) await remove(pointerPath);
+    },
+  };
+}
+
+const desktopRecoveryStore = createShellScopedRecoveryStore(
+  {
+    // The editor keeps the original pointer file, so a snapshot written
+    // before the slots were split is still offered back after an update.
+    editor: createRecoverySlot("current.json"),
+    writer: createRecoverySlot("current-writer.json"),
   },
-};
+  resolveShellMode,
+);
 
 export const desktopPlatform: Platform = {
   kind: "desktop",
@@ -198,6 +195,13 @@ export const desktopPlatform: Platform = {
 
   documentDisplayName(path: string): Promise<string> {
     return basename(path);
+  },
+
+  // `setup()` in the Rust shell runs long before the page loads, so the
+  // `file:open-path` event a cold start emits reaches no listener. The shell
+  // buffers those paths as well as emitting them; this drains the buffer.
+  takePendingOpenPaths(): Promise<string[]> {
+    return invoke<string[]>("take_pending_open_paths");
   },
 
   recovery: desktopRecoveryStore,

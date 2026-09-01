@@ -29,10 +29,17 @@ test("platform selection is a runtime feature-detect so one build serves both ve
 });
 
 test("the desktop backend keeps the staged sibling-write replacement sequence", () => {
+  // The sequence itself moved into the Rust shell: the sibling staging paths
+  // it needs are granted by no capability, so staging from the frontend made
+  // every document outside the fs:scope roots impossible to save.
   const desktop = read("src/platform/desktop.ts");
-  assert.match(desktop, /openword-tmp-/);
-  assert.match(desktop, /openword-backup-/);
+  assert.match(desktop, /invoke<DocumentReplaceResult>\("replace_document_atomically"/);
   assert.match(desktop, /retainedBackupPath/);
+
+  const rust = read("src-tauri/src/lib.rs");
+  assert.match(rust, /fn replace_file_atomically/);
+  assert.match(rust, /openword-tmp-/);
+  assert.match(rust, /openword-backup-/);
 });
 
 test("the web backend persists through browser storage only", () => {

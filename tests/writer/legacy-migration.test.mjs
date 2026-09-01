@@ -45,7 +45,9 @@ test("native shell routes legacy files through the shared supported-document pre
   const rust = read("src-tauri/src/lib.rs");
   const config = read("src-tauri/tauri.conf.json");
   assert.match(rust, /fn is_supported_document_path\(path: &str\) -> bool/);
-  assert.match(rust, /Some\("docx" \| "odt" \| "owdoc"\)/);
+  // ODT is gone: the shipping editor cannot open it and the association was
+  // removed from the bundle, so the shell must stop claiming to handle it.
+  assert.match(rust, /Some\("docx" \| "owdoc"\)/);
   assert.match(rust, /filter\(\|argument\| is_supported_document_path\(argument\)\)/);
   // Asserted against the parsed bundle rather than the raw text: what matters
   // is that .owdoc is still associated and still labelled legacy, not how the

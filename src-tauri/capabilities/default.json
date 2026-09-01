@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Baseline capabilities for the main OpenWord window. Deliberately scoped to local file I/O only; no network permissions exist in the core app.",
+  "description": "Baseline capabilities for the main OpenWord window. Deliberately scoped to local file I/O only; no network permissions exist in the core app. This list gates plugin commands; OpenWord's own commands (replace_document_atomically, take_pending_open_paths) are not plugin commands and are not gated here, which is why saving a document works outside the fs:scope roots below. Adding a src-tauri/permissions directory or an AppManifest to build.rs would turn on the application ACL and make those two commands need explicit allow-* entries.",
   "windows": ["main"],
   "permissions": [
     "core:default",

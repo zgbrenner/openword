@@ -1,12 +1,13 @@
 import type { WriterFormat } from "@/writer/protocol";
 
-// The platform layer is the only seam between the Writer document lifecycle
-// and where bytes actually live. The desktop backend persists through the
+// The platform layer is the only seam between a document lifecycle and where
+// bytes actually live. It serves both shells — the ProseMirror editor and the
+// Writer engine — over two backends: the desktop backend persists through the
 // Tauri shell to the real filesystem; the web backend persists through
 // browser storage (File System Access handles, OPFS, and IndexedDB). Both
 // must honor the same contract: a save never destroys the previous target
-// until the complete new document exists, and recovery snapshots swap
-// generations atomically.
+// until the complete new document exists, recovery snapshots swap generations
+// atomically, and one shell's snapshot is never destroyed by the other's.
 
 export type PlatformKind = "desktop" | "web";
 
@@ -97,6 +98,15 @@ export interface Platform {
   replaceDocument(path: string, bytes: Uint8Array): Promise<DocumentReplaceResult>;
   /** The user-facing file name for a platform path. */
   documentDisplayName(path: string): Promise<string>;
+
+  /**
+   * Documents the shell was asked to open before the UI existed — launching
+   * the app by double-clicking a file. Draining is destructive: each path is
+   * handed out exactly once, so calling this on mount cannot re-open a
+   * document that a `file:open-path` event already delivered. The web backend
+   * has no such queue and always resolves to an empty array.
+   */
+  takePendingOpenPaths(): Promise<string[]>;
 
   readonly recovery: PlatformRecoveryStore;
 }

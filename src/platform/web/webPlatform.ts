@@ -1,4 +1,6 @@
 import { appDialogs } from "@/lib/appDialogs.svelte";
+import { resolveShellMode } from "@/lib/shellMode";
+import { createShellScopedRecoveryStore } from "../recovery_slots";
 import type {
   DocumentPick,
   DocumentReplaceResult,
@@ -311,7 +313,21 @@ export const webPlatform: Platform = {
     return webDocumentFileName(path);
   },
 
-  recovery: createWebRecoveryStore(webKvStore),
+  // Only the native shell is handed documents before its UI exists; a browser
+  // launch arrives through the File Handling API once the page is running.
+  async takePendingOpenPaths(): Promise<string[]> {
+    return [];
+  },
+
+  // One IndexedDB slot per shell, so an editor autosave never overwrites and
+  // an editor discard never deletes a Writer snapshot (and vice versa).
+  recovery: createShellScopedRecoveryStore(
+    {
+      editor: createWebRecoveryStore(webKvStore),
+      writer: createWebRecoveryStore(webKvStore, "recovery/current/writer"),
+    },
+    resolveShellMode,
+  ),
 };
 
 /**

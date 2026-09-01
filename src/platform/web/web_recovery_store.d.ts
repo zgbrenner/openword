@@ -7,4 +7,7 @@ export interface AtomicKeyValueStore {
 }
 
 export function isValidRecoveryMetadata(metadata: unknown): metadata is RecoveryMetadata;
-export function createWebRecoveryStore(kv: AtomicKeyValueStore): PlatformRecoveryStore;
+export function createWebRecoveryStore(
+  kv: AtomicKeyValueStore,
+  slotKey?: string,
+): PlatformRecoveryStore;

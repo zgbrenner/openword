@@ -24,8 +24,11 @@ export function isValidRecoveryMetadata(metadata) {
 /**
  * @param kv an atomic key-value store: get(key), set(key, value), delete(key),
  *   each returning a promise; a set must be all-or-nothing.
+ * @param slotKey the single key this store owns. Each shell is given its own
+ *   slot so one shell's write or clear cannot destroy the other's snapshot;
+ *   the default is the original, unscoped slot.
  */
-export function createWebRecoveryStore(kv) {
+export function createWebRecoveryStore(kv, slotKey = CURRENT_SNAPSHOT_KEY) {
   return {
     async write(metadata, bytes) {
       if (!isValidRecoveryMetadata(metadata)) {
@@ -34,18 +37,18 @@ export function createWebRecoveryStore(kv) {
       if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) {
         throw new Error("Refusing to persist an empty recovery document.");
       }
-      await kv.set(CURRENT_SNAPSHOT_KEY, { metadata, bytes });
+      await kv.set(slotKey, { metadata, bytes });
     },
 
     async read() {
-      const stored = await kv.get(CURRENT_SNAPSHOT_KEY);
+      const stored = await kv.get(slotKey);
       if (!stored || !isValidRecoveryMetadata(stored.metadata)) return null;
       if (!(stored.bytes instanceof Uint8Array) || stored.bytes.byteLength === 0) return null;
       return { metadata: stored.metadata, bytes: stored.bytes };
     },
 
     async clear() {
-      await kv.delete(CURRENT_SNAPSHOT_KEY);
+      await kv.delete(slotKey);
     },
   };
 }
