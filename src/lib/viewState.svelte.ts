@@ -21,10 +21,17 @@ export class ViewState {
     this.zoom = 1;
   };
 
+  /** Drives `{#if view.showRuler}` in Ruler.svelte; toggled from the status bar. */
   toggleRuler = () => {
     this.showRuler = !this.showRuler;
   };
 
+  /**
+   * Switched from the status bar's page-size picker. PageCanvas.svelte
+   * re-derives `geometryFor(view.pageSize)` from this and pushes the new
+   * geometry into the pagination plugin, so the document re-lays out — the
+   * plugin cannot observe plain Svelte state on its own.
+   */
   setPageSize = (name: "letter" | "a4") => {
     this.pageSize = PAGE_SIZES[name];
   };

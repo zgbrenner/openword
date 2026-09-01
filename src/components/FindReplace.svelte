@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from "svelte";
+  import { getContext, untrack } from "svelte";
   import type { EditorController } from "@/lib/editorController.svelte";
   import { findAll, replaceMatch, replaceAll, selectMatch, type Match } from "@/lib/findReplace";
 
@@ -12,44 +12,92 @@
   let matchIndex = $state(0);
   let queryInput = $state<HTMLInputElement | undefined>();
 
-  const matches = $derived<Match[]>(query ? findAll(controller.doc, query) : []);
+  // controller.doc reads through the EditorView, which is not $state, so the
+  // match list has to be pinned to the snapshot the controller republishes on
+  // every transaction. Without that, every position below survives the edit
+  // that invalidated it: after one Replace the remaining matches still point
+  // at the pre-replacement document, and selecting one can address a position
+  // past the end of the new document.
+  const matches = $derived.by<Match[]>(() => {
+    void controller.snapshot;
+    return query ? findAll(controller.doc, query) : [];
+  });
+
+  // Display only: the live index can briefly sit past the end of a shrinking
+  // match list, and "0/0" is what an empty result reads as.
+  const displayIndex = $derived(matches.length === 0 ? 0 : Math.min(matchIndex, matches.length - 1) + 1);
 
   $effect(() => {
-    if (matches.length === 0) {
+    if (!open) return;
+    queryInput?.focus();
+    // Reopening the bar on a query typed earlier jumps back to the first
+    // match. Untracked deliberately: this effect must depend on `open` alone.
+    // Reading the query or the match list here would make an effect that
+    // dispatches a selection re-run on the transaction it just dispatched,
+    // which is a loop — every other selection is driven from an event handler.
+    untrack(() => goTo(0));
+  });
+
+  /**
+   * Positions read straight out of the live document rather than out of the
+   * rendered `matches`. Every navigation and replacement goes through this:
+   * a reactive list is still a list captured at render time, and a single
+   * replacement shifts, merges or removes everything after it.
+   */
+  function liveMatches(): Match[] {
+    return query ? findAll(controller.doc, query) : [];
+  }
+
+  function clampIndex(index: number, length: number): number {
+    if (length === 0) return 0;
+    return ((index % length) + length) % length;
+  }
+
+  /** Wrap `index` into the live match list and select whatever is there now. */
+  function goTo(index: number): void {
+    const live = liveMatches();
+    if (live.length === 0) {
       matchIndex = 0;
       return;
     }
-    if (matchIndex >= matches.length) matchIndex = 0;
-    if (controller.view) selectMatch(controller.view, matches[matchIndex]);
-  });
-
-  $effect(() => {
-    if (open) queryInput?.focus();
-  });
-
-  function next() {
-    if (matches.length === 0) return;
-    matchIndex = (matchIndex + 1) % matches.length;
-    if (controller.view) selectMatch(controller.view, matches[matchIndex]);
+    matchIndex = clampIndex(index, live.length);
+    if (controller.view) selectMatch(controller.view, live[matchIndex]);
   }
 
-  function prev() {
-    if (matches.length === 0) return;
-    matchIndex = (matchIndex - 1 + matches.length) % matches.length;
-    if (controller.view) selectMatch(controller.view, matches[matchIndex]);
+  function next(): void {
+    goTo(matchIndex + 1);
   }
 
-  function doReplace() {
-    if (!controller.view || matches.length === 0) return;
-    replaceMatch(controller.view, matches[matchIndex], replacement);
+  function prev(): void {
+    goTo(matchIndex - 1);
   }
 
-  function doReplaceAll() {
+  function onQueryInput(value: string): void {
+    query = value;
+    goTo(0);
+  }
+
+  function doReplace(): void {
+    const live = liveMatches();
+    if (!controller.view || live.length === 0) return;
+    const target = live[clampIndex(matchIndex, live.length)];
+    replaceMatch(controller.view, target, replacement);
+    // Re-find against the rewritten document and land on the first occurrence
+    // that starts after the text just written — never on a stale position, and
+    // never on the replacement itself when it happens to contain the query.
+    const after = target.from + replacement.length;
+    const remaining = liveMatches();
+    const following = remaining.findIndex((m) => m.from >= after);
+    goTo(following === -1 ? 0 : following);
+  }
+
+  function doReplaceAll(): void {
     if (!controller.view) return;
     replaceAll(controller.view, query, replacement);
+    matchIndex = 0;
   }
 
-  function close() {
+  function close(): void {
     open = false;
     controller.focus();
   }
@@ -61,14 +109,15 @@
       <input
         type="text"
         placeholder="Find in document"
-        bind:value={query}
+        value={query}
         bind:this={queryInput}
+        oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
         onkeydown={(e) => {
           if (e.key === "Enter") (e.shiftKey ? prev() : next());
           if (e.key === "Escape") close();
         }}
       />
-      <span class="ow-find-count">{matches.length ? `${matchIndex + 1}/${matches.length}` : "0/0"}</span>
+      <span class="ow-find-count">{matches.length ? `${displayIndex}/${matches.length}` : "0/0"}</span>
       <button class="ow-icon-btn ow-find-nav" title="Previous (Shift+Enter)" onclick={prev} disabled={!matches.length}>▲</button>
       <button class="ow-icon-btn ow-find-nav" title="Next (Enter)" onclick={next} disabled={!matches.length}>▼</button>
       <button class="ow-icon-btn" title="Close (Esc)" onclick={close}>✕</button>

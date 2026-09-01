@@ -80,18 +80,28 @@
 
   // Images are embedded as data URLs so a document is always one
   // self-contained file, whichever platform it was written on.
+  //
+  // A cancelled picker comes back as null, but everything else — a permission
+  // refusal, an unreadable file, a picker the platform cannot open at all —
+  // rejects. Left uncaught that is an unhandled rejection in a click handler
+  // with no feedback at all, so the user just sees nothing happen.
   async function pickImage() {
-    const pick = await platform.pickOpenDocument([
-      { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-    ]);
-    if (!pick) return;
-    const name = pick.kind === "bytes" ? pick.name : pick.path;
-    const bytes = pick.kind === "bytes" ? pick.bytes : await platform.readDocument(pick.path);
-    const ext = name.split(".").pop()?.toLowerCase() ?? "png";
-    const mime = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    controller.insertImage(`data:${mime};base64,${btoa(binary)}`);
+    try {
+      const pick = await platform.pickOpenDocument([
+        { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
+      ]);
+      if (!pick) return;
+      const name = pick.kind === "bytes" ? pick.name : pick.path;
+      const bytes = pick.kind === "bytes" ? pick.bytes : await platform.readDocument(pick.path);
+      const ext = name.split(".").pop()?.toLowerCase() ?? "png";
+      const mime = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      controller.insertImage(`data:${mime};base64,${btoa(binary)}`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await platform.message(detail, { title: "Could not insert image", kind: "error" });
+    }
   }
 </script>
 

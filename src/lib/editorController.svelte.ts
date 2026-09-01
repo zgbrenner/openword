@@ -142,6 +142,14 @@ export class EditorController {
   fileFormat = $state<"owdoc" | "docx">("owdoc");
   comments = $state<CommentThread[]>([]);
   suggestionMeta = $state<SuggestionMetaStore>({});
+  /**
+   * Bumped by every wholesale document load (New, Open, "open with", crash
+   * recovery). Async flows that put a dialog up before touching the document
+   * capture it first and abandon their work if it moved while the dialog was
+   * open — otherwise they overwrite whatever arrived in the meantime. See
+   * restoreRecoveryIfAvailable() in EditorShell.svelte.
+   */
+  loadToken = $state(0);
   formatPainterMarks = $state<readonly Mark[] | null>(null);
   private formatPainterSticky = false;
   /** Long-lived pagination control channel — survives loadDocument() reloads,
@@ -167,10 +175,17 @@ export class EditorController {
   /** Bind the (already-constructed) editor to a DOM mount point. Safe to call once, on mount. */
   attach(mount: HTMLElement) {
     if (this.view) return;
-    this.view = mountEditorView(mount, this.pendingState, (state) => {
+    this.view = mountEditorView(mount, this.pendingState, (state, docChanged) => {
+      // The snapshot and the suggestion metadata are recomputed for every
+      // transaction — the toolbar, status bar and review panel all track the
+      // selection, not just the content.
       this.snapshot = computeSnapshot(state);
       this.suggestionMeta = reconcileSuggestionMeta(state.doc, this.suggestionMeta, getAuthorName());
-      this.dirty = true;
+      // Dirtiness is not: moving the caret, opening the find bar, or stepping
+      // through search matches all dispatch selection-only transactions, and
+      // marking the document unsaved for those turns the close prompt and the
+      // recovery snapshot into noise for a document nobody edited.
+      if (docChanged) this.dirty = true;
     });
     // Format painter applies on the next non-empty selection the user makes
     // by dragging — mouseup is a simple, reliable signal for "selection just
@@ -195,6 +210,7 @@ export class EditorController {
     this.comments = comments;
     this.suggestionMeta = reconcileSuggestionMeta(state.doc, suggestionMeta, getAuthorName());
     this.dirty = false;
+    this.loadToken++;
   }
 
   get doc(): PMNode {

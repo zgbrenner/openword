@@ -51,6 +51,29 @@
     {/if}
   </div>
   <div class="ow-status-right">
+    <!-- View options live here rather than in a menu: the web menu bar mirrors
+         the native menu in src-tauri/src/menu.rs verbatim and that menu has no
+         View entries, so the status bar (which already owns zoom) is the one
+         place both platforms can carry them. -->
+    <button
+      class="ow-status-item ow-status-link"
+      class:active={view.showRuler}
+      title="Show ruler"
+      aria-pressed={view.showRuler}
+      onclick={view.toggleRuler}
+    >
+      Ruler
+    </button>
+    <select
+      class="ow-status-select"
+      title="Page size"
+      aria-label="Page size"
+      value={view.pageSize.name}
+      onchange={(e) => view.setPageSize((e.target as HTMLSelectElement).value as "letter" | "a4")}
+    >
+      <option value="letter">Letter</option>
+      <option value="a4">A4</option>
+    </select>
     <button class="ow-icon-btn ow-status-btn" title="Zoom out" onclick={view.zoomOut}>{@html icons.iconZoomOut}</button>
     <input
       type="range"
@@ -134,6 +157,19 @@
   .ow-status-btn :global(svg) {
     width: 13px;
     height: 13px;
+  }
+
+  .ow-status-select {
+    background: var(--ow-input-bg);
+    border: 1px solid var(--ow-input-border);
+    border-radius: 4px;
+    color: var(--ow-text-muted);
+    font-size: 11px;
+    padding: 1px 3px;
+    cursor: pointer;
+  }
+  .ow-status-select:hover {
+    color: var(--ow-text);
   }
 
   .ow-zoom-slider {

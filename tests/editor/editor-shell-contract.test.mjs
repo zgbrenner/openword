@@ -144,3 +144,114 @@ test("Find and Replace are bound by the editor because the native menu carries n
   assert.match(shell, /<FindReplace bind:open=\{findOpen\} bind:withReplace=\{findWithReplace\} \/>/);
   assert.doesNotMatch(read("src-tauri/src/menu.rs"), /"edit_find"/);
 });
+
+// --- Crash recovery, saving, and the prompts that depend on them ------------
+
+test("recovery writes and clears are serialized so neither can overtake the other", () => {
+  const shell = read("src/components/EditorShell.svelte");
+  assert.match(shell, /let recoveryQueue: Promise<void> = Promise\.resolve\(\)/);
+  assert.match(shell, /function enqueueRecovery<T>\(work: \(\) => Promise<T>\): Promise<T>/);
+  assert.match(shell, /const result = recoveryQueue\.then\(work\)/);
+  // Both directions go through the queue: an autosave landing after a
+  // successful save would leave a snapshot newer than the file on disk.
+  assert.match(shell, /function persistRecovery\(\): Promise<boolean> \{[\s\S]*?return enqueueRecovery\(/);
+  assert.match(shell, /function clearRecovery\(\): Promise<void> \{\s*return enqueueRecovery\(/);
+  assert.doesNotMatch(
+    shell,
+    /await clearRecoverySnapshot\(\)\.catch/,
+    "no save or open path may clear the snapshot outside the queue",
+  );
+});
+
+test("a close that lands on top of the autosave still flushes, instead of bailing out", () => {
+  const shell = read("src/components/EditorShell.svelte");
+  // The old guard returned early while another write was in flight, so the
+  // final flush before quitting was silently skipped.
+  assert.doesNotMatch(shell, /recoveryInFlight/);
+});
+
+test("the close prompt promises recovery only when the snapshot was written", () => {
+  const shell = read("src/components/EditorShell.svelte");
+  assert.match(shell, /const recovered = await persistRecovery\(\)/);
+  const prompt = shell.slice(shell.indexOf("const recovered = await persistRecovery()"));
+  assert.match(prompt, /recovered\s*\?\s*"You have unsaved changes\. Quit without saving\?/);
+  assert.match(prompt, /could not be saved for recovery/);
+  assert.match(prompt, /kind: recovered \? "info" : "warning"/);
+  // The failure path is reported to the caller, not swallowed into the
+  // console and then reported as success.
+  const persist = shell.slice(
+    shell.indexOf("function persistRecovery"),
+    shell.indexOf("function clearRecovery"),
+  );
+  assert.match(persist, /console\.error\("Could not write OpenWord recovery snapshot", error\);\s*return false;/);
+});
+
+test("a recovery restore is abandoned if the document changed while the prompt was up", () => {
+  const shell = read("src/components/EditorShell.svelte");
+  const restore = shell.slice(
+    shell.indexOf("async function restoreRecoveryIfAvailable"),
+    shell.indexOf("// --- Shell wiring"),
+  );
+  // Captured before the dialog, re-checked after it, and again after the
+  // discard confirmation — "open with", the launch queue and File > Open all
+  // race this prompt.
+  assert.match(restore, /const token = controller\.loadToken;/);
+  assert.equal((restore.match(/controller\.loadToken !== token/g) ?? []).length, 2);
+  assert.match(restore, /await confirmDiscard\(/);
+  const controller = read("src/lib/editorController.svelte.ts");
+  assert.match(controller, /loadToken = \$state\(0\)/);
+  assert.match(controller, /this\.loadToken\+\+;/);
+});
+
+test("saving an imported .docx warns once and offers the lossless format instead", () => {
+  const shell = read("src/components/EditorShell.svelte");
+  assert.match(shell, /const DOCX_REWRITE_WARNING =/);
+  // Wording tracks README.md's "About .docx files" list.
+  for (const dropped of [
+    "headers and footers",
+    "footnotes and endnotes",
+    "page setup",
+    "Heading 1–6",
+    "fields and tables of contents",
+    "text boxes, shapes and charts",
+    "document properties",
+  ]) {
+    assert.ok(shell.includes(dropped), `the warning must name ${dropped}`);
+  }
+  assert.match(shell, /Save a lossless \.owdoc copy instead\?/);
+  assert.match(shell, /await platform\.ask\(DOCX_REWRITE_WARNING/);
+
+  // Armed by a .docx import, disarmed by the first ask — never on every save.
+  assert.match(shell, /docxRewriteWarningPending = result\.format === "docx"/);
+  assert.match(shell, /if \(!docxRewriteWarningPending \|\| controller\.fileFormat !== "docx"\) return true;/);
+  assert.match(shell, /docxRewriteWarningPending = false;\s*const saveAsOwdoc = await platform\.ask\(/);
+  // Save is the path that overwrites the colleague's original file.
+  assert.match(shell, /if \(!\(await confirmDocxRewrite\(\)\)\) return;/);
+  const confirm = shell.slice(
+    shell.indexOf("async function confirmDocxRewrite"),
+    shell.indexOf("// --- File workflows"),
+  );
+  assert.match(confirm, /if \(!saveAsOwdoc\) return true;\s*await doSaveAs\(\);\s*return false;/);
+});
+
+test("the image picker reports failures instead of leaving an unhandled rejection", () => {
+  const toolbar = read("src/components/Toolbar.svelte");
+  const pick = toolbar.slice(toolbar.indexOf("async function pickImage"));
+  assert.match(pick, /try \{/);
+  assert.match(pick, /\} catch \(error\) \{/);
+  assert.match(pick, /platform\.message\(detail, \{ title: "Could not insert image", kind: "error" \}\)/);
+});
+
+test("the view options the page canvas and ruler read are reachable from the UI", () => {
+  const viewState = read("src/lib/viewState.svelte.ts");
+  assert.match(viewState, /toggleRuler = \(\) =>/);
+  assert.match(viewState, /setPageSize = \(name: "letter" \| "a4"\) =>/);
+  const status = read("src/components/StatusBar.svelte");
+  assert.match(status, /onclick=\{view\.toggleRuler\}/);
+  assert.match(status, /view\.setPageSize\(\(e\.target as HTMLSelectElement\)\.value as "letter" \| "a4"\)/);
+  assert.match(status, /<option value="letter">Letter<\/option>/);
+  assert.match(status, /<option value="a4">A4<\/option>/);
+  // Both are live consumers, not decoration.
+  assert.match(read("src/components/Ruler.svelte"), /\{#if view\.showRuler\}/);
+  assert.match(read("src/components/PageCanvas.svelte"), /geometryFor\(view\.pageSize\)/);
+});

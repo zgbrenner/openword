@@ -48,7 +48,21 @@
 
   let findOpen = $state(false);
   let findWithReplace = $state(false);
-  let recoveryInFlight = false;
+
+  // Recovery writes and clears are serialized through one promise chain. They
+  // race otherwise: the 20-second autosave and a save that clears the snapshot
+  // are started from unrelated callers, and an autosave landing after a
+  // successful save leaves a snapshot newer than the file on disk — the next
+  // launch then offers "unsaved work", and accepting it repoints Save at the
+  // original path and writes the stale content back over the newer file.
+  let recoveryQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Set while the open document came in through the lossy .docx importer and
+   * the user has not been warned about saving back over it yet. See
+   * confirmDocxRewrite().
+   */
+  let docxRewriteWarningPending = false;
 
   $effect(() => {
     const title = `${controller.dirty ? "● " : ""}${controller.fileName} — OpenWord`;
@@ -82,6 +96,38 @@
     // A byte-only pick (a browser with no writable file handles) has nowhere
     // to save back to, so it opens dirty and the first Save becomes Save As.
     controller.markDirty(result.path === null);
+    docxRewriteWarningPending = result.format === "docx";
+  }
+
+  // --- Saving an imported .docx --------------------------------------------
+
+  // Kept short enough to read in a dialog; the full list is in README.md's
+  // "About .docx files".
+  const DOCX_REWRITE_WARNING =
+    "This document came from a Word file, and OpenWord rebuilds a .docx from scratch when it saves." +
+    " Saving over it drops everything OpenWord does not model: headers and footers, footnotes and endnotes," +
+    " page setup, every style except Heading 1–6, fields and tables of contents, text boxes, shapes and charts," +
+    " and the document properties.\n\n" +
+    "Save a lossless .owdoc copy instead?";
+
+  /**
+   * The .docx filters are a best-effort exchange format, not a round trip, so
+   * the first save of an imported .docx offers the native format before
+   * overwriting the original. Asked once per document — a prompt on every
+   * Ctrl+S would just train the user to dismiss it.
+   *
+   * Returns false when the caller should stop because Save As took over.
+   */
+  async function confirmDocxRewrite(): Promise<boolean> {
+    if (!docxRewriteWarningPending || controller.fileFormat !== "docx") return true;
+    docxRewriteWarningPending = false;
+    const saveAsOwdoc = await platform.ask(DOCX_REWRITE_WARNING, {
+      title: "Saving over a Word document",
+      kind: "warning",
+    });
+    if (!saveAsOwdoc) return true;
+    await doSaveAs();
+    return false;
   }
 
   // --- File workflows -------------------------------------------------------
@@ -92,7 +138,8 @@
     controller.filePath = null;
     controller.fileFormat = "owdoc";
     controller.fileName = "Untitled document";
-    await clearRecoverySnapshot().catch(() => {});
+    docxRewriteWarningPending = false;
+    await clearRecovery();
   }
 
   async function doOpen(): Promise<void> {
@@ -101,7 +148,7 @@
       const result = await openDocumentDialog();
       if (!result) return;
       applyOpenResult(result);
-      await clearRecoverySnapshot().catch(() => {});
+      await clearRecovery();
     } catch (error) {
       await showError("Could not open document", error);
     }
@@ -111,7 +158,7 @@
     if (!(await confirmDiscard("open another document"))) return;
     try {
       applyOpenResult(await openDocumentAtPath(path));
-      await clearRecoverySnapshot().catch(() => {});
+      await clearRecovery();
     } catch (error) {
       await showError("Could not open document", error);
     }
@@ -119,6 +166,7 @@
 
   async function doSave(): Promise<void> {
     if (!controller.filePath) return doSaveAs();
+    if (!(await confirmDocxRewrite())) return;
     try {
       const result = await writeDocument(
         controller.doc,
@@ -128,7 +176,7 @@
         controller.fileFormat,
       );
       controller.markDirty(false);
-      await clearRecoverySnapshot().catch(() => {});
+      await clearRecovery();
       await reportRetainedBackup(result);
     } catch (error) {
       await showError("Could not save document", error);
@@ -148,7 +196,10 @@
       controller.fileFormat = result.format;
       controller.fileName = result.name;
       controller.markDirty(false);
-      await clearRecoverySnapshot().catch(() => {});
+      // The Save As dialog put the format in front of the user, so whichever
+      // one they picked they have now chosen it knowingly.
+      docxRewriteWarningPending = false;
+      await clearRecovery();
       await reportRetainedBackup(result);
     } catch (error) {
       await showError("Could not save document", error);
@@ -254,39 +305,82 @@
 
   // --- Crash recovery -------------------------------------------------------
 
-  async function persistRecovery(): Promise<void> {
-    if (!controller.dirty || recoveryInFlight) return;
-    recoveryInFlight = true;
-    try {
-      await writeRecoverySnapshot(controller.doc, controller.comments, controller.suggestionMeta, {
-        fileName: controller.fileName,
-        originalPath: controller.filePath,
-      });
-    } catch (error) {
-      console.error("Could not write OpenWord recovery snapshot", error);
-    } finally {
-      recoveryInFlight = false;
-    }
+  /** Append work to the single recovery queue, so writes and clears can never overtake each other. */
+  function enqueueRecovery<T>(work: () => Promise<T>): Promise<T> {
+    const result = recoveryQueue.then(work);
+    recoveryQueue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  /**
+   * Write the crash-recovery snapshot for the current document.
+   *
+   * Resolves true when a snapshot representing the current document is safely
+   * stored — including the "nothing to store, the document is clean" case —
+   * and false when the write failed. The close prompt words itself from that:
+   * promising recovery we could not perform is how unsaved work gets lost.
+   */
+  function persistRecovery(): Promise<boolean> {
+    // Queued rather than skipped when another write is running: a close that
+    // lands on top of the 20-second autosave still has to flush the latest
+    // content, not silently return.
+    return enqueueRecovery(async () => {
+      if (!controller.dirty) return true;
+      try {
+        await writeRecoverySnapshot(controller.doc, controller.comments, controller.suggestionMeta, {
+          fileName: controller.fileName,
+          originalPath: controller.filePath,
+        });
+        return true;
+      } catch (error) {
+        console.error("Could not write OpenWord recovery snapshot", error);
+        return false;
+      }
+    });
+  }
+
+  /** Drop the snapshot, after any queued write has finished. */
+  function clearRecovery(): Promise<void> {
+    return enqueueRecovery(() => clearRecoverySnapshot().catch(() => {}));
   }
 
   async function restoreRecoveryIfAvailable(): Promise<void> {
     const snapshot = await readRecoverySnapshot().catch(() => null);
     if (!snapshot) return;
 
+    // This prompt races the shell's other document sources — "open with" on
+    // the desktop, the launch queue on the web, and the user reaching for
+    // File > Open. Restoring on top of whichever one won would discard that
+    // document and repoint Save at snapshot.originalPath, so the next Ctrl+S
+    // would write to a different file than the one on screen.
+    const token = controller.loadToken;
     const restore = await platform.ask(
       `OpenWord found unsaved work from ${new Date(snapshot.createdAt).toLocaleString()}. Restore it?`,
       { title: "Recover document" },
     );
+    // Abandoned, not cleared: the snapshot stays so the next launch — with
+    // nothing else competing for the window — can offer it again.
+    if (controller.loadToken !== token) return;
+
     if (!restore) {
-      await clearRecoverySnapshot().catch(() => {});
+      await clearRecovery();
       return;
     }
+
+    // Nothing reloaded the document, but the user may still have typed into
+    // it while the dialog was up.
+    if (!(await confirmDiscard("restore the recovered document"))) return;
+    if (controller.loadToken !== token) return;
 
     controller.loadDocument(snapshot.doc, snapshot.comments, snapshot.suggestionMeta);
     controller.filePath = snapshot.originalPath;
     controller.fileFormat = snapshot.originalPath ? documentFormatForPath(snapshot.originalPath) : "owdoc";
     controller.fileName = snapshot.fileName;
     controller.markDirty(true);
+    docxRewriteWarningPending = controller.fileFormat === "docx";
   }
 
   // --- Shell wiring ---------------------------------------------------------
@@ -300,15 +394,34 @@
       if (path) void openAtPath(path);
     });
 
+    // A file the user launched OpenWord with is emitted from Tauri's setup
+    // hook, long before this listener exists, so a cold start would otherwise
+    // drop it and open a blank document. The native side buffers those paths
+    // as well as emitting them; draining is destructive, so a path already
+    // delivered to the listener above cannot arrive twice.
+    void platform
+      .takePendingOpenPaths()
+      .then((paths) => {
+        const path = paths[0];
+        if (path) return openAtPath(path);
+      })
+      .catch(() => {});
+
     let unlistenClose: (() => void) | undefined;
     getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (!controller.dirty) return;
         event.preventDefault();
-        await persistRecovery();
+        // Only promise the next-launch recovery if the snapshot actually got
+        // written. A disk-full, antivirus-locked or over-quota write leaves
+        // nothing to restore, and the user answering this prompt would be
+        // agreeing to lose the document outright.
+        const recovered = await persistRecovery();
         const discard = await platform.ask(
-          "You have unsaved changes. Quit without saving? OpenWord offers the unsaved work again on the next launch.",
-          { title: "OpenWord" },
+          recovered
+            ? "You have unsaved changes. Quit without saving? OpenWord offers the unsaved work again on the next launch."
+            : "You have unsaved changes, and your unsaved work could not be saved for recovery — quitting loses it for good. Quit anyway?",
+          { title: "OpenWord", kind: recovered ? "info" : "warning" },
         );
         if (discard) await getCurrentWindow().destroy();
       })

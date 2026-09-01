@@ -30,10 +30,31 @@ export function buildEditorState(doc: PMNode | undefined, paginationRuntime: Pag
   return EditorState.create({ schema, doc, plugins: buildPlugins(paginationRuntime) });
 }
 
+export interface AppliedTransaction {
+  state: EditorState;
+  /**
+   * False for transactions that only moved the selection or set metadata.
+   * The shell needs the distinction because "the document is dirty" and
+   * "something happened in the editor" are not the same thing: clicking once
+   * in an untouched document must not arm the unsaved-changes prompt, while
+   * every selection-dependent piece of UI still has to be recomputed.
+   */
+  docChanged: boolean;
+}
+
+/**
+ * Fold a transaction into a new state, reporting whether it actually changed
+ * the document. Split out from the dispatcher below so the distinction is
+ * unit-testable without a DOM.
+ */
+export function applyTransaction(state: EditorState, tr: Transaction): AppliedTransaction {
+  return { state: state.apply(tr), docChanged: tr.docChanged };
+}
+
 export function mountEditorView(
   mount: HTMLElement,
   state: EditorState,
-  onTransaction: (state: EditorState) => void,
+  onTransaction: (state: EditorState, docChanged: boolean) => void,
 ): EditorView {
   const view = new EditorView(mount, {
     state,
@@ -42,9 +63,9 @@ export function mountEditorView(
     // of real removals and new content gets an `insertion` mark — otherwise
     // it's a no-op passthrough to the dispatch below.
     dispatchTransaction: withSuggestChanges((tr: Transaction) => {
-      const newState = view.state.apply(tr);
+      const { state: newState, docChanged } = applyTransaction(view.state, tr);
       view.updateState(newState);
-      onTransaction(newState);
+      onTransaction(newState, docChanged);
     }),
     attributes: {
       class: "ow-prosemirror",
