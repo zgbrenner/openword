@@ -31,8 +31,8 @@
   "dependencies": {
     "@handlewithcare/prosemirror-suggest-changes": "^0.1.8",
     "@tauri-apps/api": "^2.9.0",
-    "@tauri-apps/plugin-dialog": "^2.4.0",
-    "@tauri-apps/plugin-fs": "^2.4.4",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-fs": "^2.5.2",
     "docx": "^9.7.1",
     "jszip": "^3.10.1",
     "orderedmap": "^2.1.1",
