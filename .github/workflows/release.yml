@@ -171,6 +171,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: OpenWord ${{ steps.meta.outputs.version }}
@@ -198,8 +200,8 @@ jobs:
           # No updater plugin is configured, so there is no latest.json and no
           # .sig files to publish. Flip both back on if tauri-plugin-updater is
           # ever added (see Option C in the signing block below).
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
           # Also keep the bundles as workflow artifacts, so deleting a draft
           # release does not take the only copy of the build with it.
           uploadWorkflowArtifacts: true

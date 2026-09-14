@@ -252,6 +252,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(PendingOpenPaths::default())
         // Commands the application defines itself, as opposed to plugin
         // commands, are not gated by the capability ACL while the crate ships

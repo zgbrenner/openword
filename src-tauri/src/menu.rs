@@ -22,6 +22,7 @@ pub fn build<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     // On macOS the first submenu becomes the app menu regardless of label.
     let app_menu = SubmenuBuilder::new(app, "OpenWord")
         .item(&item("help_about", "About OpenWord", None)?)
+        .item(&item("help_update", "Check for Updates...", None)?)
         .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
         .separator()
@@ -73,6 +74,8 @@ pub fn build<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
         .build()?;
 
     let help_menu = SubmenuBuilder::new(app, "Help")
+        .item(&item("help_update", "Check for Updates...", None)?)
+        .separator()
         .item(&item("help_about", "About OpenWord", None)?)
         .build()?;
 

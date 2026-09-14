@@ -44,6 +44,7 @@
   } from "@/writer/recovery";
   import { WriterRuntimeHost } from "@/writer/runtimeHost";
   import { WriterState } from "@/writer/state.svelte";
+  import { checkForUpdates } from "@/lib/updater";
 
   const shell = resolveShellMode();
   const platform = getPlatform();
@@ -323,6 +324,7 @@
           { title: "OpenWord" },
         );
         return;
+      case "help_update": return checkForUpdates();
       default:
         return unavailable(id.replaceAll("_", " "));
     }

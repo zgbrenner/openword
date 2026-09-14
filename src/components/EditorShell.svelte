@@ -35,6 +35,7 @@
   import { isMacPlatform, shortcutMenuAction } from "@/lib/webShortcuts";
   import { getPlatform } from "@/platform";
   import { registerWebDocumentHandle } from "@/platform/web/webPlatform";
+  import { checkForUpdates } from "@/lib/updater";
 
   const platform = getPlatform();
   const pagination = new PaginationState();
@@ -259,6 +260,8 @@
           "OpenWord 0.1.0 — a free, open-source, lightweight word processor.\nApache-2.0 licensed.",
           { title: "OpenWord" },
         );
+
+      case "help_update": return checkForUpdates();
 
       default:
         return;
