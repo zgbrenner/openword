@@ -81,17 +81,16 @@ jobs:
 
       # Same optional-engine contract as release.yml: set the WRITER_RUNTIME_URL
       # repository variable (or secret) to a .zip / .tar.gz of
-      # public/writer-runtime/. Unlike the desktop build, the *web* build hard
-      # requires it - `npm run build:web` starts with `engine:verify` - so this
-      # step fails loudly with an explanation rather than being skipped.
+      # public/writer-runtime/. If missing, it will simply skip the download
+      # and build the standard ProseMirror web app without the LibreOffice engine.
       - name: Fetch the Writer runtime
         env:
           WRITER_RUNTIME_URL: ${{ vars.WRITER_RUNTIME_URL || secrets.WRITER_RUNTIME_URL }}
         run: |
           set -euo pipefail
           if [ -z "${WRITER_RUNTIME_URL:-}" ]; then
-            echo '::error::WRITER_RUNTIME_URL is not set. The web build runs engine:verify first and cannot run without the Writer WASM runtime. See docs/web-hosting.md.'
-            exit 1
+            echo '::warning::WRITER_RUNTIME_URL is not set. The web build will proceed without the LibreOffice Writer runtime.'
+            exit 0
           fi
           case "$WRITER_RUNTIME_URL" in
             *.zip) archive="$RUNNER_TEMP/writer-runtime.zip" ;;

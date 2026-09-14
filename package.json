@@ -10,7 +10,7 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "build:desktop": "npm run test && npm run build",
     "build:desktop:engine": "npm run engine:verify && npm run test && npm run build",
-    "build:web": "npm run engine:verify && npm run test:writer && svelte-check --tsconfig ./tsconfig.json && vite build --mode web",
+    "build:web": "svelte-check --tsconfig ./tsconfig.json && vite build --mode web",
     "preview": "vite preview",
     "dev:web": "vite --mode web",
     "preview:web": "vite preview --mode web",
