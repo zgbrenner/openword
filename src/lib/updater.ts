@@ -1,8 +1,9 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getPlatform } from "@/platform";
+import { appDialogs } from "@/lib/appDialogs.svelte";
 
-export async function checkForUpdates(): Promise<void> {
+export async function checkForUpdates(options?: { silent?: boolean }): Promise<void> {
   const platform = getPlatform();
   if (platform.kind !== "desktop") {
     await platform.message("Updates are managed through your browser for the web version.", { title: "OpenWord" });
@@ -20,22 +21,32 @@ export async function checkForUpdates(): Promise<void> {
       if (wantUpdate) {
         let downloaded = 0;
         let contentLength = 0;
+        const progressDialog = appDialogs.progress("Downloading Update", "Preparing download...");
+        
         await update.downloadAndInstall((event) => {
           switch (event.event) {
             case 'Started':
               contentLength = event.data.contentLength || 0;
-              console.log(`started downloading ${event.data.contentLength} bytes`);
               break;
             case 'Progress':
               downloaded += event.data.chunkLength;
-              console.log(`downloaded ${downloaded} from ${contentLength}`);
+              if (contentLength > 0) {
+                const percent = Math.min(downloaded / contentLength, 1);
+                const mbDownloaded = (downloaded / 1024 / 1024).toFixed(1);
+                const mbTotal = (contentLength / 1024 / 1024).toFixed(1);
+                progressDialog.update(`Downloading... ${mbDownloaded} MB / ${mbTotal} MB`, percent);
+              } else {
+                progressDialog.update(`Downloading... ${(downloaded / 1024 / 1024).toFixed(1)} MB`, 0);
+              }
               break;
             case 'Finished':
-              console.log('download finished');
+              progressDialog.update("Download complete. Installing...", 1);
               break;
           }
         });
         
+        progressDialog.close();
+
         const restart = await platform.ask(
           "Update installed successfully. Do you want to restart OpenWord now?",
           { title: "Update Complete", kind: "info" }
@@ -44,7 +55,7 @@ export async function checkForUpdates(): Promise<void> {
           await relaunch();
         }
       }
-    } else {
+    } else if (!options?.silent) {
       await platform.message("You are running the latest version of OpenWord.", { title: "No Update Available" });
     }
   } catch (error) {

@@ -30,7 +30,8 @@ export type DialogKind = "info" | "warning" | "error";
 export type ActiveDialog =
   | { type: "message"; title: string; detail: string; kind: DialogKind; resolve: () => void }
   | { type: "ask"; title: string; detail: string; kind: DialogKind; resolve: (answer: boolean) => void }
-  | { type: "saveAs"; title: string; request: SaveAsRequest; resolve: (result: SaveAsResult | null) => void };
+  | { type: "saveAs"; title: string; request: SaveAsRequest; resolve: (result: SaveAsResult | null) => void }
+  | { type: "progress"; title: string; detail: string; progress: number };
 
 /** Trimmed name, or null when empty or containing path separators. */
 export function sanitizeFileName(name: string): string | null {
@@ -87,6 +88,26 @@ class AppDialogService {
     });
   }
 
+  progress(title: string, detail: string): { update: (detail: string, progress: number) => void; close: () => void } {
+    const dialog: ActiveDialog = { type: "progress", title, detail, progress: 0 };
+    this.#enqueue(dialog);
+    return {
+      update: (newDetail: string, newProgress: number) => {
+        if (this.active === dialog) {
+          this.active.detail = newDetail;
+          this.active.progress = newProgress;
+        }
+      },
+      close: () => {
+        if (this.active === dialog) {
+          this.#next();
+        } else {
+          this.#queue = this.#queue.filter((d) => d !== dialog);
+        }
+      },
+    };
+  }
+
   // The methods below are called by AppDialog.svelte to settle the active
   // dialog. They resolve after advancing the queue so a re-prompt from the
   // resolver lands behind any already queued dialogs' turn correctly.
@@ -124,7 +145,8 @@ class AppDialogService {
     this.#next();
     if (dialog.type === "message") dialog.resolve();
     else if (dialog.type === "ask") dialog.resolve(false);
-    else dialog.resolve(null);
+    else if (dialog.type === "saveAs") dialog.resolve(null);
+    // Progress dialogs cannot be cancelled by the user via the Esc key.
   }
 }
 

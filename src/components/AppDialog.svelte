@@ -72,7 +72,7 @@
       aria-describedby={active.type !== "saveAs" || active.request.note ? "ow-dialog-detail" : undefined}
       bind:this={dialogEl}
     >
-      <h2 id="ow-dialog-title" class={active.type !== "saveAs" ? active.kind : "info"}>{active.title}</h2>
+      <h2 id="ow-dialog-title" class={active.type !== "saveAs" && active.type !== "progress" ? active.kind : "info"}>{active.title}</h2>
 
       {#if active.type === "saveAs"}
         <label class="field">
@@ -97,6 +97,11 @@
         <div class="buttons">
           <button type="button" onclick={() => appDialogs.cancel()}>Cancel</button>
           <button type="button" class="primary" disabled={!nameValid} onclick={confirmPrimary}>Save</button>
+        </div>
+      {:else if active.type === "progress"}
+        <p id="ow-dialog-detail" class="detail">{active.detail}</p>
+        <div class="progress-bar">
+          <progress value={active.progress} max="1"></progress>
         </div>
       {:else}
         <p id="ow-dialog-detail" class="detail">{active.detail}</p>
@@ -220,4 +225,30 @@
   }
   .buttons button.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--ow-accent); }
   .buttons button:disabled { opacity: 0.45; cursor: default; }
+
+  .progress-bar {
+    display: flex;
+    margin-top: 6px;
+    margin-bottom: 2px;
+  }
+  .progress-bar progress {
+    width: 100%;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    background: var(--ow-chrome-border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-bar progress::-webkit-progress-bar {
+    background: var(--ow-chrome-border);
+  }
+  .progress-bar progress::-webkit-progress-value {
+    background: var(--ow-accent);
+    transition: width 0.2s ease-out;
+  }
+  .progress-bar progress::-moz-progress-bar {
+    background: var(--ow-accent);
+  }
 </style>

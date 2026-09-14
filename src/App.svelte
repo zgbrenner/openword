@@ -442,6 +442,13 @@
   }
 
   onMount(() => {
+    if (isTauri()) {
+      // Check for updates silently in the background after a short delay
+      setTimeout(() => {
+        checkForUpdates({ silent: true }).catch(console.error);
+      }, 3000);
+    }
+
     // EditorShell owns its own document lifecycle and window wiring; only the
     // Writer engine shell's engine-backed autosave belongs to this component.
     if (shell !== "writer") return;
